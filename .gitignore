@@ -1,0 +1,17 @@
+.DS_Store
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+vendor/
+private/
+.idea
+.idea/*
+.vs
+.env
+*.log
+x2md
