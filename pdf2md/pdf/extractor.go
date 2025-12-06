@@ -849,7 +849,10 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 			adjustment := -v / 1000.0 * gs.FontSize * (gs.HorizScaling / 100.0)
 
 			// If significant adjustment (space), emit current text
-			if math.Abs(v) > 200 && currentText.Len() > 0 {
+			// Normal word spacing is ~250-333/1000 em (0.25-0.33 em)
+			// Use 300 as threshold to avoid false word breaks from kerning
+			// Kerning adjustments are typically -50 to -150 units
+			if math.Abs(v) > 300 && currentText.Len() > 0 {
 				// Add space
 				currentText.WriteString(" ")
 			}

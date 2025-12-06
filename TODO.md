@@ -53,14 +53,29 @@ All medium priority improvements have been completed:
 ## Accuracy Improvements
 
 ### 8. Add Comprehensive Test Suite
-Currently no test files exist. Priority test cases:
-- Table detection with various column counts
-- Cross-page table merging
-- Header deduplication
-- Date spacing edge cases
-- False header detection prevention
+✅ Test suite implemented with the following test files:
+- `pdf2md/transform/compact_lines_test.go` - Line compaction and spacing tests
+- `pdf2md/models/models_test.go` - Model structure tests
+- `pdf2md/models/blocktypes_test.go` - Block type and table rendering tests
 
-### 9. Add Debug Logging Option
+### 9. Word Break Accuracy
+✅ Fixed word break issues where words were incorrectly split:
+- "redundancy" was appearing as "red undancy"
+- "Devices" was appearing as "Dev ices"
+- "certificate" was appearing as "cer tificate"
+- "discovery" was appearing as "disc overy"
+- "AutoUpdate" was appearing as "AutoUpda te"
+
+**Fixes applied in `pdf2md/transform/compact_lines.go`:**
+- Added height filtering (>= 4.0) to exclude invalid font size values from avgHeight calculation
+- Added `getEffectiveWidth()` to correct implausible width values from PDF extraction
+- Added `isWordContinuation()` to detect word fragments split across text items
+- Changed `alphanumericGapThreshold` constant for font-size-relative space detection
+
+**Fix applied in `pdf2md/pdf/extractor.go`:**
+- Changed TJ array space threshold from 200 to 300 to handle tight kerning
+
+### 10. Add Debug Logging Option
 Add optional debug output for table detection decisions to help troubleshoot issues with new PDFs.
 
 ## Known Limitations

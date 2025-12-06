@@ -76,13 +76,20 @@ func TestNeedsSpaceBetween(t *testing.T) {
 			want:      false,
 		},
 
-		// Large gaps need spaces
+		// Large gaps need spaces (alphanumeric chars need gap > 25px)
 		{
-			name:      "large gap between words",
+			name:      "large gap between alphanumeric words",
 			prevText:  "word1",
 			nextText:  "word2",
-			xDistance: 35,
+			xDistance: 30,
 			want:      true,
+		},
+		{
+			name:      "medium gap between alphanumeric words - no space",
+			prevText:  "word1",
+			nextText:  "word2",
+			xDistance: 20,
+			want:      false, // Below alphanumericGapThreshold (25)
 		},
 
 		// Small gaps with alphanumeric
@@ -103,22 +110,35 @@ func TestNeedsSpaceBetween(t *testing.T) {
 			want:      false,
 		},
 
-		// Normal word spacing - gap between smallGapThreshold and largeGapThreshold
+		// Alphanumeric word spacing - need gaps > 25px for spaces
 		{
-			name:      "normal word gap needs space",
+			name:      "alphanumeric gap 20 - no space",
 			prevText:  "hello",
 			nextText:  "world",
 			xDistance: 20,
-			want:      true,
+			want:      false, // Below alphanumericGapThreshold (25)
 		},
-		// Gap just above minSpaceGapThreshold but within smallGapThreshold
-		// with alphanumeric content - no space (likely same word)
 		{
-			name:      "small gap alphanumeric no space",
+			name:      "alphanumeric gap 12 - no space",
 			prevText:  "hello",
 			nextText:  "world",
 			xDistance: 12,
-			want:      false, // Both alphanumeric, small gap
+			want:      false, // Both alphanumeric, below threshold
+		},
+		// Non-alphanumeric characters use lower thresholds
+		{
+			name:      "symbol to word - large gap needs space",
+			prevText:  "?",
+			nextText:  "What",
+			xDistance: 35,
+			want:      true, // Symbol to alphanumeric > largeGapThreshold
+		},
+		{
+			name:      "word to symbol - small gap",
+			prevText:  "text",
+			nextText:  "?",
+			xDistance: 15,
+			want:      true, // Non-matching pattern, > minSpaceGapThreshold
 		},
 	}
 
@@ -357,12 +377,20 @@ func TestCombineText(t *testing.T) {
 		want  string
 	}{
 		{
-			name: "simple text combination",
+			name: "simple text combination with large gap",
 			items: []*models.TextItem{
-				{X: 0, Y: 100, Width: 30, Text: "Hello"},
-				{X: 45, Y: 100, Width: 30, Text: "World"},
+				{X: 0, Y: 100, Width: 30, Height: 12, Text: "Hello"},
+				{X: 80, Y: 100, Width: 30, Height: 12, Text: "World"}, // Gap of 50 (80-30) > 36 (12*3) threshold
 			},
 			want: "Hello World",
+		},
+		{
+			name: "text items with small gap - same word",
+			items: []*models.TextItem{
+				{X: 0, Y: 100, Width: 30, Height: 12, Text: "Hello"},
+				{X: 50, Y: 100, Width: 30, Height: 12, Text: "World"}, // Gap of 20 (50-30) < 36 (12*3) threshold
+			},
+			want: "HelloWorld", // No space - considered same word in PDF
 		},
 		{
 			name: "date with hyphens",

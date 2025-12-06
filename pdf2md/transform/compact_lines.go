@@ -39,12 +39,20 @@ const (
 	tableRegionTolerance = 10.0
 
 	// largeGapThreshold is the gap size that definitely needs a space
+	// (only used when characters are not both alphanumeric)
 	largeGapThreshold = 30.0
+
+	// alphanumericGapThreshold is the gap size that adds space between alphanumeric chars
+	// PDFs often have kerning/tracking that creates small gaps within words
+	// Typical values: intra-word kerning gaps ~5-15px, word spacing ~20-40px
+	// Set threshold between these ranges to avoid false breaks
+	alphanumericGapThreshold = 25.0
 
 	// smallGapThreshold is the gap size for word boundary detection
 	smallGapThreshold = 15.0
 
 	// minSpaceGapThreshold is the minimum gap that might need a space
+	// (only used for non-alphanumeric boundaries)
 	minSpaceGapThreshold = 10.0
 
 	// minRowThreshold is the minimum row threshold for table grouping
@@ -66,7 +74,9 @@ const (
 	referenceAlignmentThreshold = 0.8
 
 	// yLineWrapThreshold is the Y distance that indicates a line wrap
-	yLineWrapThreshold = 3.0
+	// Must be larger than the line grouping threshold (mostUsedDistance/2, typically 5-8px)
+	// to avoid false word breaks from slight Y variations in same-line text
+	yLineWrapThreshold = 10.0
 
 	// yTolerance is the tolerance for considering items on the same line
 	yTolerance = 2.0
@@ -1051,8 +1061,26 @@ func (c *CompactLines) compactLine(textItems []*models.TextItem, fontToFormats m
 	// - groupByLine and groupTextItemsByLine sort by X within each Y-group
 	// DO NOT re-sort here as it would break the column ordering for table cells
 
+	// Calculate average font size for this line based on height values
+	// This helps with space detection when width calculations are inaccurate
+	// Filter out obviously wrong height values (< 4pt is too small to be readable text)
+	var avgHeight float64
+	heightCount := 0
+	for _, item := range textItems {
+		if item.Height >= 4.0 { // Minimum readable font size
+			avgHeight += item.Height
+			heightCount++
+		}
+	}
+	if heightCount > 0 {
+		avgHeight /= float64(heightCount)
+	}
+	if avgHeight < 4.0 {
+		avgHeight = 12.0 // Default font size
+	}
+
 	// Combine text and detect formatting
-	words := c.itemsToWords(textItems, fontToFormats)
+	words := c.itemsToWordsWithContext(textItems, fontToFormats, avgHeight)
 
 	if len(words) == 0 {
 		return nil
@@ -1085,8 +1113,12 @@ func (c *CompactLines) compactLine(textItems []*models.TextItem, fontToFormats m
 }
 
 func (c *CompactLines) itemsToWords(items []*models.TextItem, fontToFormats map[string]*models.WordFormat) []*models.Word {
+	return c.itemsToWordsWithContext(items, fontToFormats, 12.0) // Default font size
+}
+
+func (c *CompactLines) itemsToWordsWithContext(items []*models.TextItem, fontToFormats map[string]*models.WordFormat, avgFontSize float64) []*models.Word {
 	// Combine text with spacing
-	combinedText := c.combineText(items)
+	combinedText := c.combineTextWithContext(items, avgFontSize)
 
 	// Split into words
 	wordStrings := strings.Fields(combinedText)
@@ -1124,9 +1156,18 @@ func (c *CompactLines) itemsToWords(items []*models.TextItem, fontToFormats map[
 }
 
 func (c *CompactLines) combineText(items []*models.TextItem) string {
+	return c.combineTextWithContext(items, 12.0) // Default font size
+}
+
+func (c *CompactLines) combineTextWithContext(items []*models.TextItem, avgFontSize float64) string {
 	var text strings.Builder
 	var lastItem *models.TextItem
 	endsWithSpace := false // Track trailing space to avoid repeated String() calls
+
+	// Calculate dynamic thresholds based on font size
+	// Word space is typically 0.2-0.33 em, so ~2.5-4 times font size for pixel gap
+	// Use a more conservative threshold (3x font size) to avoid false breaks
+	wordSpaceThreshold := avgFontSize * 3.0
 
 	for _, item := range items {
 		textToAdd := item.Text
@@ -1149,19 +1190,27 @@ func (c *CompactLines) combineText(items []*models.TextItem) string {
 				// Check if we're on a different Y line (cell wrap in table)
 				yDistance := math.Abs(item.Y - lastItem.Y)
 				if yDistance > yLineWrapThreshold {
-					// Different line - check if previous text ends with hyphen (continuation)
+					// Different line - check if this is a word continuation
 					prevText := strings.TrimSpace(lastItem.Text)
+					nextTextTrimmed := strings.TrimSpace(textToAdd)
+
+					// Check for hyphen continuation
 					if strings.HasSuffix(prevText, "-") || strings.HasSuffix(prevText, "–") {
 						// Hyphen at end of line = continuation, no space needed
+					} else if c.isWordContinuation(prevText, nextTextTrimmed) {
+						// Likely a word continuation (e.g., "AutoUpda" + "te")
+						// No space needed
 					} else {
 						// Normal line wrap - add space
 						text.WriteString(" ")
 						endsWithSpace = true
 					}
 				} else {
-					// Same line - check for word boundary
-					xDistance := item.X - lastItem.X - lastItem.Width
-					needsSpace := c.needsSpaceBetween(lastItem.Text, textToAdd, xDistance)
+					// Same line - check for word boundary using font-relative threshold
+					// Use corrected width if the stored width seems wrong
+					effectiveWidth := c.getEffectiveWidth(lastItem, avgFontSize)
+					xDistance := item.X - lastItem.X - effectiveWidth
+					needsSpace := c.needsSpaceBetweenWithThreshold(lastItem.Text, textToAdd, xDistance, wordSpaceThreshold)
 					if needsSpace {
 						text.WriteString(" ")
 						endsWithSpace = true
@@ -1182,8 +1231,38 @@ func (c *CompactLines) combineText(items []*models.TextItem) string {
 	return text.String()
 }
 
+// getEffectiveWidth returns a reasonable width for the text item
+// If the stored width seems wrong (too small for the text length), estimate based on font size
+func (c *CompactLines) getEffectiveWidth(item *models.TextItem, avgFontSize float64) float64 {
+	if item.Width <= 0 {
+		// No width, estimate from text length
+		return float64(len(item.Text)) * avgFontSize * 0.5
+	}
+
+	// Check if width is plausible
+	// Average character width is roughly 0.5 * font size
+	// Minimum expected width = text length * fontSize * 0.3 (for narrow fonts)
+	textLen := len(strings.TrimSpace(item.Text))
+	if textLen == 0 {
+		return item.Width
+	}
+
+	minExpectedWidth := float64(textLen) * avgFontSize * 0.3
+	if item.Width < minExpectedWidth {
+		// Width seems too small, use estimated width instead
+		return float64(textLen) * avgFontSize * 0.5
+	}
+
+	return item.Width
+}
+
 // needsSpaceBetween determines if a space should be inserted between two text items
 func (c *CompactLines) needsSpaceBetween(prevText, nextText string, xDistance float64) bool {
+	return c.needsSpaceBetweenWithThreshold(prevText, nextText, xDistance, alphanumericGapThreshold)
+}
+
+// needsSpaceBetweenWithThreshold determines if a space should be inserted, with a custom threshold
+func (c *CompactLines) needsSpaceBetweenWithThreshold(prevText, nextText string, xDistance float64, wordThreshold float64) bool {
 	// If negative distance (overlap), no space
 	if xDistance < 0 {
 		return false
@@ -1196,11 +1275,6 @@ func (c *CompactLines) needsSpaceBetween(prevText, nextText string, xDistance fl
 	// Hyphens/dashes connect without spaces (check BEFORE gap size)
 	if prevLast == '-' || nextFirst == '-' || prevLast == '–' || nextFirst == '–' {
 		return false
-	}
-
-	// If there's a large gap, add space (but only after checking punctuation)
-	if xDistance > largeGapThreshold {
-		return true
 	}
 
 	// Periods, commas, colons attached to previous text
@@ -1218,17 +1292,24 @@ func (c *CompactLines) needsSpaceBetween(prevText, nextText string, xDistance fl
 		return false
 	}
 
-	// For small gaps, use context: if both are alphanumeric, likely same word
-	if xDistance < smallGapThreshold {
-		// Numbers and letters in sequence (like dates "23-Mar-2020")
-		if (isAlphanumeric(prevLast) && isAlphanumeric(nextFirst)) ||
-			(isAlphanumeric(prevLast) && isPunctuation(nextFirst)) ||
-			(isPunctuation(prevLast) && isAlphanumeric(nextFirst)) {
-			return false
-		}
+	// For alphanumeric characters, use the font-relative threshold
+	// This handles cases where width calculations are inaccurate due to font encoding issues
+	if isAlphanumeric(prevLast) && isAlphanumeric(nextFirst) {
+		return xDistance > wordThreshold
 	}
 
-	// Default: add space for gaps > threshold
+	// For mixed alphanumeric/punctuation (like "v3.0" or "FMT_MOF"), don't add space for small gaps
+	if (isAlphanumeric(prevLast) && isPunctuation(nextFirst)) ||
+		(isPunctuation(prevLast) && isAlphanumeric(nextFirst)) {
+		return xDistance > largeGapThreshold
+	}
+
+	// If there's a large gap with non-alphanumeric chars, add space
+	if xDistance > largeGapThreshold {
+		return true
+	}
+
+	// Default: add space for gaps > threshold (for symbols, whitespace, etc.)
 	return xDistance > minSpaceGapThreshold
 }
 
@@ -1253,7 +1334,31 @@ func isAlphanumeric(r rune) bool {
 
 func isPunctuation(r rune) bool {
 	return r == '-' || r == '–' || r == '.' || r == ',' || r == ':' || r == ';' ||
-		r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}'
+		r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}' ||
+		r == '_' || r == '/'
+}
+
+// isWordContinuation checks if nextText likely continues the word from prevText
+// This handles cases where a word is split across lines in PDFs
+func (c *CompactLines) isWordContinuation(prevText, nextText string) bool {
+	if prevText == "" || nextText == "" {
+		return false
+	}
+
+	prevLast := lastRune(prevText)
+	nextFirst := firstRune(nextText)
+
+	// If prev ends with alphanumeric and next starts with lowercase letter,
+	// it's likely a word continuation (e.g., "AutoUpda" + "te")
+	if isAlphanumeric(prevLast) && nextFirst >= 'a' && nextFirst <= 'z' {
+		// Additional check: nextText should be short (1-4 chars) to be a fragment
+		// Longer text is more likely to be a new word/sentence
+		if len(nextText) <= 4 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *CompactLines) detectElements(words []*models.Word, items []*models.TextItem) *models.ParsedElements {
