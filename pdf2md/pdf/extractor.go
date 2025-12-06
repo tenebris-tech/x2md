@@ -278,6 +278,19 @@ func (e *TextExtractor) getMediaBox(page *Object) [4]float64 {
 	return defaultBox
 }
 
+// GetPageDimensions returns the width and height of a page
+func (e *TextExtractor) GetPageDimensions(pageIndex int) (width, height float64, err error) {
+	page, err := e.parser.GetPage(pageIndex)
+	if err != nil {
+		return 0, 0, fmt.Errorf("getting page %d: %w", pageIndex, err)
+	}
+
+	mediaBox := e.getMediaBox(page)
+	width = mediaBox[2] - mediaBox[0]
+	height = mediaBox[3] - mediaBox[1]
+	return width, height, nil
+}
+
 // GraphicsState represents the current graphics state
 type GraphicsState struct {
 	CTM          [6]float64 // Current transformation matrix

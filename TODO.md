@@ -1,6 +1,6 @@
 # TODO.md
 
-This file tracks pending improvements and known issues for the pdf2mdgo project.
+This file tracks pending improvements and known issues for x2md.
 
 ## Completed Work (Latest Session)
 
@@ -25,125 +25,32 @@ All 4 issues from the original `issues1.txt` have been resolved:
    - Cross-page tables merged into single continuous table
 
 ### Files Modified
-- `models/models.go` - Added IsTableRow, IsTableHeader, TableColumns to LineItem
-- `models/blocktypes.go` - Added table rendering in LinesToText()
-- `transform/compact_lines.go` - Table detection and column extraction
-- `transform/gather_blocks.go` - Keep table rows together in blocks
-- `transform/remove_blank_pages.go` - Count lines within blocks
-- `transform/to_markdown.go` - Header deduplication, cross-page merging
-- `transform/detect_headers.go` - Skip punctuation-ending lines
+- `pdf2md/models/models.go` - Added IsTableRow, IsTableHeader, TableColumns to LineItem
+- `pdf2md/models/blocktypes.go` - Added table rendering in LinesToText()
+- `pdf2md/transform/compact_lines.go` - Table detection and column extraction
+- `pdf2md/transform/gather_blocks.go` - Keep table rows together in blocks
+- `pdf2md/transform/remove_blank_pages.go` - Count lines within blocks
+- `pdf2md/transform/to_markdown.go` - Header deduplication, cross-page merging
+- `pdf2md/transform/detect_headers.go` - Skip punctuation-ending lines
 
 ## High Priority Improvements
 
-### 1. Extract Magic Numbers to Constants
-**Location**: `transform/compact_lines.go`
+All high priority improvements have been completed:
 
-Many magic numbers should be named constants for readability:
-```go
-// Current (scattered throughout code)
-if math.Abs(item.Y-minY) < 5
-if item.Y >= headerY && item.Y < 700
-if item.X-lastX >= 40
-
-// Recommended
-const (
-    yPositionTolerance       = 5.0
-    maxPageContentY          = 700.0
-    minColumnSpacing         = 40.0
-    columnAlignmentTolerance = 20.0
-    columnBucketSize         = 15.0
-    referenceColumnMinGap    = 30.0
-)
-```
-
-**Affected lines**: 87, 232, 300, 342, 376, 419, 448, 518, 564
-
-### 2. Make Known Table Headers Configurable
-**Location**: `transform/compact_lines.go:309-313`
-
-Currently hardcoded:
-```go
-knownHeaders := []string{
-    "Version Date Description",
-    "Element Evaluator Actions",
-    "Requirement Dependency",
-}
-```
-
-Should be moved to package-level variable or configuration for extensibility.
-
-### 3. Add Copy() Method to LineItem
-**Location**: `models/models.go`
-
-The `AddItem()` function manually copies each field. If new fields are added, developers might forget to update the copy logic.
-
-```go
-func (l *LineItem) Copy() *LineItem {
-    if l == nil {
-        return nil
-    }
-    return &LineItem{
-        X:              l.X,
-        Y:              l.Y,
-        Width:          l.Width,
-        Height:         l.Height,
-        Words:          l.Words,
-        Type:           l.Type,
-        Annotation:     l.Annotation,
-        ParsedElements: l.ParsedElements,
-        Font:           l.Font,
-        IsTableRow:     l.IsTableRow,
-        IsTableHeader:  l.IsTableHeader,
-        TableColumns:   append([]string{}, l.TableColumns...),
-    }
-}
-```
+1. ✅ **Extract Magic Numbers to Constants** - Added named constants at top of `pdf2md/transform/compact_lines.go`
+2. ✅ **Make Known Table Headers Configurable** - Moved to `KnownTableHeaders` package-level variable
+3. ✅ **Add Copy() Method to LineItem** - Added `Copy()` method and updated `AddItem()` to use it
 
 ## Medium Priority Improvements
 
-### 4. Add Documentation to Complex Functions
-**Location**: `transform/compact_lines.go`
+All medium priority improvements have been completed:
 
-Functions needing godoc comments:
-- `detectTableRegions()` - Explain the detection algorithms
-- `groupAsTableWithMetadata()` - Explain row grouping logic
-- `detectMultiLineCells()` - Explain multi-line cell detection
-- `extractColumnTexts()` - Explain column text extraction
+4. ✅ **Add Documentation to Complex Functions** - Added godoc comments to `detectTableRegions()`, `groupAsTableWithMetadata()`, `detectMultiLineCells()`, `extractColumnTexts()`, and `groupAsTable()`
+5. ✅ **Refactor Deeply Nested Code** - Extracted helper methods: `visualRow` struct with `addItemToRow()`, `isInYRange()`, plus `checkColumnOverlap()`, `tryAddItemToRow()`, and `sortRowItems()`
+6. ✅ **Add Validation for Empty Table Rows** - Added check in `LinesToText()` to skip table rows where all columns are whitespace-only
+7. ✅ **Performance: String Building Optimization** - Added `endsWithSpace` tracking variable to avoid repeated `text.String()` calls in `combineText()`
 
-### 5. Refactor Deeply Nested Code
-**Location**: `transform/compact_lines.go:732-838`
-
-The `groupAsTable()` function has 4-5 levels of nesting. Extract helper functions:
-```go
-func (c *CompactLines) shouldAddToRow(item *models.TextItem, row *visualRow, columns []float64, rowThreshold float64) bool
-```
-
-### 6. Add Validation for Empty Table Rows
-**Location**: `models/blocktypes.go:146-160`
-
-Check if table rows have any non-empty content before rendering:
-```go
-if line.IsTableRow && len(line.TableColumns) > 0 {
-    hasContent := false
-    for _, col := range line.TableColumns {
-        if strings.TrimSpace(col) != "" {
-            hasContent = true
-            break
-        }
-    }
-    if !hasContent {
-        continue // Skip empty table rows
-    }
-    // ... render table
-}
-```
-
-### 7. Performance: String Building Optimization
-**Location**: `transform/compact_lines.go:989-1041`
-
-The `combineText()` function calls `text.String()` repeatedly, creating temporary copies. Cache the string when multiple checks are needed.
-
-## Low Priority / Future Work
+## Accuracy Improvements
 
 ### 8. Add Comprehensive Test Suite
 Currently no test files exist. Priority test cases:
@@ -156,16 +63,15 @@ Currently no test files exist. Priority test cases:
 ### 9. Add Debug Logging Option
 Add optional debug output for table detection decisions to help troubleshoot issues with new PDFs.
 
-### 10. Consider sync.Pool for High-Frequency Usage
-If profiling shows GC pressure from temporary slices/maps in transformation pipeline, consider object pooling.
-
 ## Known Limitations
 
-1. **Y=700 Footer Threshold**: Hardcoded value assumes standard page size. May need adjustment for non-standard PDFs.
+1. ✅ **Footer Threshold**: Now calculated dynamically as 88% of page height (was hardcoded Y=700).
 
-2. **Known Headers List**: Only recognizes specific table headers for continuation detection. New document types may need additions.
+2. **Known Headers List**: Uses `KnownTableHeaders` package variable. New document types may need additions.
 
-3. **Two-Column Reference Tables**: Reference table detection assumes exactly 2 columns (ID + description).
+3. **Two-Column Reference Tables**: Reference table detection uses exactly 2 columns (ID + description) intentionally to prevent date fragments from being split into separate columns. This is appropriate for most reference tables.
+
+4. **Glossary/Definition Tables**: Tables with term-definition format may have content incorrectly split across columns if the layout uses complex multi-line cells.
 
 ## Quality Assurance Checklist
 

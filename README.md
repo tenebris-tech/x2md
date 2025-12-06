@@ -65,7 +65,7 @@ go build -o
 
 This software was written from scratch in pure Go with the assistance of Claude Code and Codex.
 
-We greatfully acknowledge inspriration from the following open source projects:
+We gratefully acknowledge inspiration from the following open source projects:
 
 - https://github.com/opendocsg/pdf2md (MIT License)
 

@@ -144,6 +144,18 @@ func LinesToText(lineItems []*LineItem, disableInlineFormats bool) string {
 	for lineIndex, line := range lineItems {
 		// Handle table rows
 		if line.IsTableRow && len(line.TableColumns) > 0 {
+			// Skip empty table rows (all columns are whitespace-only)
+			hasContent := false
+			for _, col := range line.TableColumns {
+				if strings.TrimSpace(col) != "" {
+					hasContent = true
+					break
+				}
+			}
+			if !hasContent {
+				continue
+			}
+
 			if !inTable {
 				inTable = true
 				headerWritten = false

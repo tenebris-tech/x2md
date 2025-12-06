@@ -213,9 +213,14 @@ func (c *Converter) Convert(data []byte) (string, error) {
 			})
 		}
 
+		// Get page dimensions
+		pageWidth, pageHeight, _ := extractor.GetPageDimensions(i)
+
 		pages = append(pages, &models.Page{
-			Index: i,
-			Items: items,
+			Index:  i,
+			Items:  items,
+			Width:  pageWidth,
+			Height: pageHeight,
 		})
 
 		if c.options.OnPageParsed != nil {

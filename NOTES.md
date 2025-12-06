@@ -1,7 +1,7 @@
-# pdf2mdgo Development Notes
+# x2md Development Notes
 
 ## Overview
-This library is a pure Go port of the @opendocsg/pdf2md JavaScript library for converting PDF files to Markdown.
+x2md is a pure Go utility for converting various file formats to Markdown. The PDF conversion functionality was inspired by the @opendocsg/pdf2md JavaScript library.
 
 ## Architecture
 
@@ -62,7 +62,7 @@ Based on pdf2md, the transformation order is:
 - LZW compression not fully implemented
 - Complex table layouts may not convert perfectly
 
-## Key Insights from pdf2md
+## Key Insights from Original pdf2md
 
 1. **Text extraction** relies on pdf.js which extracts text items with:
    - x, y coordinates (transform[4], transform[5])

@@ -20,8 +20,10 @@ type TextItem struct {
 
 // Page represents a page in the document
 type Page struct {
-	Index int
-	Items []interface{} // Can be TextItem, LineItem, or LineItemBlock
+	Index  int
+	Items  []interface{} // Can be TextItem, LineItem, or LineItemBlock
+	Width  float64       // Page width in points
+	Height float64       // Page height in points
 }
 
 // Word represents a word with optional formatting
@@ -51,6 +53,27 @@ type LineItem struct {
 // Text returns the text content of the line
 func (l *LineItem) Text() string {
 	return strings.Join(l.WordStrings(), " ")
+}
+
+// Copy creates a deep copy of the LineItem
+func (l *LineItem) Copy() *LineItem {
+	if l == nil {
+		return nil
+	}
+	return &LineItem{
+		X:              l.X,
+		Y:              l.Y,
+		Width:          l.Width,
+		Height:         l.Height,
+		Words:          l.Words,
+		Type:           l.Type,
+		Annotation:     l.Annotation,
+		ParsedElements: l.ParsedElements,
+		Font:           l.Font,
+		IsTableRow:     l.IsTableRow,
+		IsTableHeader:  l.IsTableHeader,
+		TableColumns:   append([]string{}, l.TableColumns...),
+	}
 }
 
 // WordStrings returns the strings of all words
@@ -86,20 +109,7 @@ func (b *LineItemBlock) AddItem(item *LineItem) {
 		}
 	}
 
-	copiedItem := &LineItem{
-		X:              item.X,
-		Y:              item.Y,
-		Width:          item.Width,
-		Height:         item.Height,
-		Words:          item.Words,
-		Annotation:     item.Annotation,
-		ParsedElements: item.ParsedElements,
-		Font:           item.Font,
-		IsTableRow:     item.IsTableRow,
-		IsTableHeader:  item.IsTableHeader,
-		TableColumns:   item.TableColumns,
-	}
-	b.Items = append(b.Items, copiedItem)
+	b.Items = append(b.Items, item.Copy())
 }
 
 // ParsedElements contains parsed metadata for a line
