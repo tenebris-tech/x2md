@@ -2,104 +2,62 @@
 
 This file tracks pending improvements and known issues for x2md.
 
-## Completed Work (Latest Session)
+## Current Status
 
-### Issues Fixed
-All 4 issues from the original `issues1.txt` have been resolved:
+### PDF Conversion - Stable
+All major features implemented and tested.
 
+### DOCX Conversion - Initial Release
+Core functionality implemented:
+- Paragraph extraction with formatting
+- Heading detection from Word styles
+- List processing (bullet and numbered)
+- Table conversion to markdown
+- Hyperlink conversion
+- Text run merging per OOXML spec
+
+---
+
+## PDF Conversion
+
+### Completed Work
+
+#### Issues Fixed
 1. **Date Spacing** - Fixed extra space in "06-December -2023"
    - Modified `needsSpaceBetween()` in `transform/compact_lines.go`
-   - Checks for hyphens before considering gap size
 
 2. **False Header Detection** - Fixed "academia." being detected as H4
-   - Modified `transform/detect_headers.go`
-   - Skips lines ending with punctuation (., ,, etc.)
+   - Modified `transform/detect_headers.go` to skip punctuation-ending lines
 
 3. **Reference Table Grouping** - Fixed [CC1], [CC2] table rendering
    - Added `detectReferenceTable()` in `transform/compact_lines.go`
-   - Detects bracketed IDs and groups with descriptions
 
 4. **Revision History Table** - Full table support implemented
-   - Added table detection, rendering, header deduplication
-   - Tables now render with `| col1 | col2 |` markdown syntax
+   - Tables render with `| col1 | col2 |` markdown syntax
    - Cross-page tables merged into single continuous table
 
-### Files Modified
-- `pdf2md/models/models.go` - Added IsTableRow, IsTableHeader, TableColumns to LineItem
-- `pdf2md/models/blocktypes.go` - Added table rendering in LinesToText()
-- `pdf2md/transform/compact_lines.go` - Table detection and column extraction
-- `pdf2md/transform/gather_blocks.go` - Keep table rows together in blocks
-- `pdf2md/transform/remove_blank_pages.go` - Count lines within blocks
-- `pdf2md/transform/to_markdown.go` - Header deduplication, cross-page merging
-- `pdf2md/transform/detect_headers.go` - Skip punctuation-ending lines
+#### Code Quality Improvements
+- Extracted magic numbers to constants
+- Made known table headers configurable
+- Added `Copy()` method to LineItem
+- Added documentation to complex functions
+- Refactored deeply nested code with helper methods
+- Added validation for empty table rows
+- Optimized string building performance
 
-## High Priority Improvements
+#### Test Suite
+- `pdf2md/transform/compact_lines_test.go`
+- `pdf2md/models/models_test.go`
+- `pdf2md/models/blocktypes_test.go`
 
-All high priority improvements have been completed:
+### Known Limitations
 
-1. ✅ **Extract Magic Numbers to Constants** - Added named constants at top of `pdf2md/transform/compact_lines.go`
-2. ✅ **Make Known Table Headers Configurable** - Moved to `KnownTableHeaders` package-level variable
-3. ✅ **Add Copy() Method to LineItem** - Added `Copy()` method and updated `AddItem()` to use it
+1. **Scanned PDFs**: Only text-based PDFs supported
+2. **Complex Layouts**: Overlapping text regions may not convert perfectly
+3. **Font Encodings**: Some non-standard fonts may have character issues
+4. **Math Formulas**: Converted as plain text
 
-## Medium Priority Improvements
-
-All medium priority improvements have been completed:
-
-4. ✅ **Add Documentation to Complex Functions** - Added godoc comments to `detectTableRegions()`, `groupAsTableWithMetadata()`, `detectMultiLineCells()`, `extractColumnTexts()`, and `groupAsTable()`
-5. ✅ **Refactor Deeply Nested Code** - Extracted helper methods: `visualRow` struct with `addItemToRow()`, `isInYRange()`, plus `checkColumnOverlap()`, `tryAddItemToRow()`, and `sortRowItems()`
-6. ✅ **Add Validation for Empty Table Rows** - Added check in `LinesToText()` to skip table rows where all columns are whitespace-only
-7. ✅ **Performance: String Building Optimization** - Added `endsWithSpace` tracking variable to avoid repeated `text.String()` calls in `combineText()`
-
-## Accuracy Improvements
-
-### 8. Add Comprehensive Test Suite
-✅ Test suite implemented with the following test files:
-- `pdf2md/transform/compact_lines_test.go` - Line compaction and spacing tests
-- `pdf2md/models/models_test.go` - Model structure tests
-- `pdf2md/models/blocktypes_test.go` - Block type and table rendering tests
-
-### 9. Word Break Accuracy
-✅ Fixed word break issues where words were incorrectly split:
-- "redundancy" was appearing as "red undancy"
-- "Devices" was appearing as "Dev ices"
-- "certificate" was appearing as "cer tificate"
-- "discovery" was appearing as "disc overy"
-- "AutoUpdate" was appearing as "AutoUpda te"
-
-**Fixes applied in `pdf2md/transform/compact_lines.go`:**
-- Added height filtering (>= 4.0) to exclude invalid font size values from avgHeight calculation
-- Added `getEffectiveWidth()` to correct implausible width values from PDF extraction
-- Added `isWordContinuation()` to detect word fragments split across text items
-- Changed `alphanumericGapThreshold` constant for font-size-relative space detection
-
-**Fix applied in `pdf2md/pdf/extractor.go`:**
-- Changed TJ array space threshold from 200 to 300 to handle tight kerning
-
-### 10. Add Debug Logging Option
-Add optional debug output for table detection decisions to help troubleshoot issues with new PDFs.
-
-## Known Limitations
-
-1. ✅ **Footer Threshold**: Now calculated dynamically as 88% of page height (was hardcoded Y=700).
-
-2. **Known Headers List**: Uses `KnownTableHeaders` package variable. New document types may need additions.
-
-3. **Two-Column Reference Tables**: Reference table detection uses exactly 2 columns (ID + description) intentionally to prevent date fragments from being split into separate columns. This is appropriate for most reference tables.
-
-4. **Glossary/Definition Tables**: Tables with term-definition format may have content incorrectly split across columns if the layout uses complex multi-line cells.
-
-## Quality Assurance Checklist
-
-When making changes, verify:
-- [ ] `go build ./...` succeeds
-- [ ] `go vet ./...` reports no issues
-- [ ] Test PDF converts without errors
-- [ ] Tables render with proper `|` separators
-- [ ] Cross-page tables merge correctly
-- [ ] No false header detection on sentence fragments
-- [ ] Date formatting preserved (no extra spaces)
-
-## Reference Test Cases
+### PDF Test Cases
 
 Test with `CPP_ND_V3.0E.pdf` (245 pages):
 
@@ -109,4 +67,75 @@ Test with `CPP_ND_V3.0E.pdf` (245 pages):
 | 2 | Text | "academia." not a header |
 | 3 | Reference table | [CC1], [CC2], etc. with \| separators |
 | 3-5 | Revision History | Single merged table, 13 rows, one header |
-| 5 | Last row | "0.1 \| 05-Sep-2014 \| Draft published..." |
+
+---
+
+## DOCX Conversion
+
+### Completed Work
+
+1. **Core Parser** (`docx2md/docx/parser.go`)
+   - ZIP archive extraction
+   - XML parsing with namespace handling
+
+2. **Content Extraction** (`docx2md/docx/extractor.go`)
+   - Paragraph processing
+   - Text run extraction with formatting
+   - Table cell parsing
+   - Hyperlink resolution
+
+3. **Style Support** (`docx2md/docx/styles.go`)
+   - Heading style detection (Heading 1-6, Title, Subtitle)
+   - Bold/italic formatting from styles
+   - Numbering definitions for lists
+
+4. **Text Run Merging**
+   - Per OOXML spec, runs concatenate without implicit spaces
+   - Fixes fragmented text from Word editing
+
+5. **Test Suite** (`docx2md/converter_test.go`)
+   - Simple paragraph test
+   - Bold/italic formatting tests
+   - Heading detection test
+   - Table conversion test
+   - Invalid file handling
+
+### Known Limitations
+
+1. **Images**: Not extracted (references only)
+2. **Nested Tables**: May not render perfectly
+3. **Advanced Formatting**: Text boxes, shapes ignored
+4. **Track Changes**: Comments and revisions not included
+5. **Headers/Footers**: Document headers/footers not extracted
+
+### Future Improvements
+
+- [ ] Image extraction to separate files
+- [ ] Footnote/endnote support
+- [ ] Header/footer extraction option
+- [ ] Better nested list handling
+- [ ] Support for document sections
+
+### DOCX Test Cases
+
+Test with sample files in `private/`:
+
+| File | Features to Verify |
+|------|-------------------|
+| Pentest Report | Tables, headings, lists, text merging |
+| Services Agreement | Nested lists, hyperlinks, bold/italic |
+| MegaSuite Access | Multiple hyperlinks, formatting |
+
+---
+
+## Quality Assurance Checklist
+
+When making changes, verify:
+- [ ] `go build ./...` succeeds
+- [ ] `go vet ./...` reports no issues
+- [ ] `go test ./...` passes
+- [ ] PDF conversion works correctly
+- [ ] DOCX conversion works correctly
+- [ ] Tables render with proper `|` separators
+- [ ] Formatting (bold/italic) preserved
+- [ ] Hyperlinks converted correctly
