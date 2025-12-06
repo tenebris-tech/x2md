@@ -410,6 +410,16 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 		return nil
 	}
 
+	// Merge consecutive words with the same format to fix broken formatting
+	words = mergeConsecutiveFormattedWords(words)
+
+	// Clean up whitespace in words
+	words = cleanupWordWhitespace(words)
+
+	if len(words) == 0 {
+		return nil
+	}
+
 	lineItem := &models.LineItem{
 		Words: words,
 	}
@@ -477,4 +487,83 @@ func (e *Extractor) GetStyles() *Styles {
 // GetRelationships returns the parsed relationships
 func (e *Extractor) GetRelationships() *Relationships {
 	return e.relationships
+}
+
+// mergeConsecutiveFormattedWords merges adjacent words that have the same formatting
+// This fixes issues where DOCX splits formatted text across multiple runs
+func mergeConsecutiveFormattedWords(words []*models.Word) []*models.Word {
+	if len(words) <= 1 {
+		return words
+	}
+
+	var result []*models.Word
+	current := words[0]
+
+	for i := 1; i < len(words); i++ {
+		next := words[i]
+
+		// Check if formats match and neither is a special type (like links)
+		if sameFormat(current.Format, next.Format) && current.Type == nil && next.Type == nil {
+			// Merge: append next's text to current
+			// Handle spacing between merged words
+			if !strings.HasSuffix(current.String, " ") && !strings.HasPrefix(next.String, " ") {
+				current.String += " " + next.String
+			} else {
+				current.String += next.String
+			}
+		} else {
+			result = append(result, current)
+			current = next
+		}
+	}
+	result = append(result, current)
+
+	return result
+}
+
+// sameFormat checks if two word formats are equivalent
+func sameFormat(a, b *models.WordFormat) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Name == b.Name
+}
+
+// cleanupWordWhitespace cleans up whitespace issues in words
+func cleanupWordWhitespace(words []*models.Word) []*models.Word {
+	var result []*models.Word
+	for _, w := range words {
+		// Skip empty words and pure whitespace words (except tabs)
+		trimmed := strings.TrimSpace(w.String)
+		if trimmed == "" && w.String != "\t" {
+			continue
+		}
+
+		// Normalize multiple spaces to single space
+		w.String = normalizeSpaces(w.String)
+
+		result = append(result, w)
+	}
+	return result
+}
+
+// normalizeSpaces replaces multiple consecutive spaces with a single space
+func normalizeSpaces(s string) string {
+	var result strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		if r == ' ' {
+			if !prevSpace {
+				result.WriteRune(r)
+				prevSpace = true
+			}
+		} else {
+			result.WriteRune(r)
+			prevSpace = false
+		}
+	}
+	return result.String()
 }
