@@ -411,6 +411,7 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 	}
 
 	// Merge consecutive words with the same format to fix broken formatting
+	// Per OOXML spec, runs concatenate directly without implicit spaces
 	words = mergeConsecutiveFormattedWords(words)
 
 	// Clean up whitespace in words
@@ -490,7 +491,9 @@ func (e *Extractor) GetRelationships() *Relationships {
 }
 
 // mergeConsecutiveFormattedWords merges adjacent words that have the same formatting
-// This fixes issues where DOCX splits formatted text across multiple runs
+// This fixes issues where DOCX splits formatted text across multiple runs.
+// Per OOXML spec, runs are concatenated directly - spaces only exist if explicitly
+// present in the <w:t> content with xml:space="preserve".
 func mergeConsecutiveFormattedWords(words []*models.Word) []*models.Word {
 	if len(words) <= 1 {
 		return words
@@ -504,13 +507,8 @@ func mergeConsecutiveFormattedWords(words []*models.Word) []*models.Word {
 
 		// Check if formats match and neither is a special type (like links)
 		if sameFormat(current.Format, next.Format) && current.Type == nil && next.Type == nil {
-			// Merge: append next's text to current
-			// Handle spacing between merged words
-			if !strings.HasSuffix(current.String, " ") && !strings.HasPrefix(next.String, " ") {
-				current.String += " " + next.String
-			} else {
-				current.String += next.String
-			}
+			// Merge: concatenate directly per OOXML spec (no implicit space)
+			current.String += next.String
 		} else {
 			result = append(result, current)
 			current = next
