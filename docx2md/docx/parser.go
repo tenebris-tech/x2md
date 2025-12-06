@@ -1,0 +1,249 @@
+package docx
+
+import (
+	"archive/zip"
+	"bytes"
+	"encoding/xml"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+)
+
+// Parser handles DOCX file parsing
+type Parser struct {
+	data      []byte
+	zipReader *zip.Reader
+	files     map[string]*zip.File
+
+	// Cached parsed content
+	document      *Document
+	styles        *Styles
+	numbering     *Numbering
+	relationships *Relationships
+}
+
+// NewParser creates a parser from byte data
+func NewParser(data []byte) (*Parser, error) {
+	reader := bytes.NewReader(data)
+	zipReader, err := zip.NewReader(reader, int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("opening ZIP archive: %w", err)
+	}
+
+	p := &Parser{
+		data:      data,
+		zipReader: zipReader,
+		files:     make(map[string]*zip.File),
+	}
+
+	// Index files by name
+	for _, f := range zipReader.File {
+		p.files[f.Name] = f
+	}
+
+	return p, nil
+}
+
+// NewParserFromFile creates a parser from a file path
+func NewParserFromFile(path string) (*Parser, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading file: %w", err)
+	}
+	return NewParser(data)
+}
+
+// Parse parses the DOCX structure
+func (p *Parser) Parse() error {
+	// Verify this is a valid DOCX file
+	if _, ok := p.files["word/document.xml"]; !ok {
+		return fmt.Errorf("not a valid DOCX file: missing word/document.xml")
+	}
+	return nil
+}
+
+// GetDocument returns the parsed document content
+func (p *Parser) GetDocument() (*Document, error) {
+	if p.document != nil {
+		return p.document, nil
+	}
+
+	doc := &Document{}
+	if err := p.readXML("word/document.xml", doc); err != nil {
+		return nil, err
+	}
+
+	p.document = doc
+	return doc, nil
+}
+
+// GetStyles returns the parsed styles
+func (p *Parser) GetStyles() (*Styles, error) {
+	if p.styles != nil {
+		return p.styles, nil
+	}
+
+	styles := &Styles{}
+	if err := p.readXML("word/styles.xml", styles); err != nil {
+		// Styles file is optional
+		return &Styles{}, nil
+	}
+
+	p.styles = styles
+	return styles, nil
+}
+
+// GetNumbering returns the parsed numbering definitions
+func (p *Parser) GetNumbering() (*Numbering, error) {
+	if p.numbering != nil {
+		return p.numbering, nil
+	}
+
+	numbering := &Numbering{}
+	if err := p.readXML("word/numbering.xml", numbering); err != nil {
+		// Numbering file is optional
+		return &Numbering{}, nil
+	}
+
+	p.numbering = numbering
+	return numbering, nil
+}
+
+// GetRelationships returns the parsed document relationships
+func (p *Parser) GetRelationships() (*Relationships, error) {
+	if p.relationships != nil {
+		return p.relationships, nil
+	}
+
+	rels := &Relationships{}
+	if err := p.readXML("word/_rels/document.xml.rels", rels); err != nil {
+		// Relationships file is optional
+		return &Relationships{}, nil
+	}
+
+	p.relationships = rels
+	return rels, nil
+}
+
+// readXML reads and parses an XML file from the ZIP archive
+func (p *Parser) readXML(filename string, v interface{}) error {
+	f, ok := p.files[filename]
+	if !ok {
+		return fmt.Errorf("file not found: %s", filename)
+	}
+
+	rc, err := f.Open()
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", filename, err)
+	}
+	defer rc.Close()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", filename, err)
+	}
+
+	// Use custom decoder that handles Word XML namespaces
+	if err := unmarshalWordXML(data, v); err != nil {
+		return fmt.Errorf("parsing %s: %w", filename, err)
+	}
+
+	return nil
+}
+
+// ReadFile reads a raw file from the ZIP archive
+func (p *Parser) ReadFile(filename string) ([]byte, error) {
+	f, ok := p.files[filename]
+	if !ok {
+		return nil, fmt.Errorf("file not found: %s", filename)
+	}
+
+	rc, err := f.Open()
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", filename, err)
+	}
+	defer rc.Close()
+
+	return io.ReadAll(rc)
+}
+
+// ListFiles returns all file paths in the archive
+func (p *Parser) ListFiles() []string {
+	var files []string
+	for name := range p.files {
+		files = append(files, name)
+	}
+	return files
+}
+
+// unmarshalWordXML handles Word's XML with namespaces
+func unmarshalWordXML(data []byte, v interface{}) error {
+	// Word XML uses namespaces that need to be handled
+	// The main namespace is "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+	// We'll strip namespaces for simpler parsing
+
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder.Strict = false
+	decoder.Entity = xml.HTMLEntity
+
+	// Create a custom token reader that strips namespace prefixes
+	return decodeWithNamespaceStripping(decoder, v)
+}
+
+// decodeWithNamespaceStripping decodes XML while handling namespaces
+func decodeWithNamespaceStripping(decoder *xml.Decoder, v interface{}) error {
+	// We need to handle Word XML namespaces properly
+	// The main document elements are in the "w" namespace
+	// We'll use a custom unmarshal approach
+
+	var tokens []xml.Token
+	for {
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		// Transform token to strip namespace prefixes from local names
+		switch t := tok.(type) {
+		case xml.StartElement:
+			t.Name.Local = stripNamespacePrefix(t.Name.Local)
+			t.Name.Space = ""
+			for i := range t.Attr {
+				t.Attr[i].Name.Local = stripNamespacePrefix(t.Attr[i].Name.Local)
+				t.Attr[i].Name.Space = ""
+			}
+			tok = t
+		case xml.EndElement:
+			t.Name.Local = stripNamespacePrefix(t.Name.Local)
+			t.Name.Space = ""
+			tok = t
+		}
+		tokens = append(tokens, tok)
+	}
+
+	// Re-encode tokens to XML and decode into struct
+	var buf bytes.Buffer
+	encoder := xml.NewEncoder(&buf)
+	for _, tok := range tokens {
+		if err := encoder.EncodeToken(tok); err != nil {
+			return err
+		}
+	}
+	if err := encoder.Flush(); err != nil {
+		return err
+	}
+
+	return xml.Unmarshal(buf.Bytes(), v)
+}
+
+// stripNamespacePrefix removes namespace prefix from element names
+func stripNamespacePrefix(name string) string {
+	if idx := strings.Index(name, ":"); idx != -1 {
+		return name[idx+1:]
+	}
+	return name
+}
