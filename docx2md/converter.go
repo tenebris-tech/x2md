@@ -8,6 +8,8 @@ import (
 
 	"github.com/tenebris-tech/x2md/docx2md/docx"
 	"github.com/tenebris-tech/x2md/docx2md/transform"
+	"github.com/tenebris-tech/x2md/imageutil"
+	"github.com/tenebris-tech/x2md/pdf2md/models"
 )
 
 // Converter is the main DOCX to Markdown converter
@@ -109,23 +111,85 @@ func (c *Converter) ConvertFile(inputPath string) (string, error) {
 
 // ConvertFileToFile converts a DOCX file and writes the result to a file
 func (c *Converter) ConvertFileToFile(inputPath, outputPath string) error {
-	markdown, err := c.ConvertFile(inputPath)
+	// Read input file
+	data, err := os.ReadFile(inputPath)
+	if err != nil {
+		return fmt.Errorf("reading file: %w", err)
+	}
+
+	// Convert to markdown and get images
+	markdown, images, err := c.ConvertWithImages(data)
 	if err != nil {
 		return err
 	}
+
+	// Write images if enabled and there are images
+	if c.options.PreserveImages && len(images) > 0 {
+		markdown, err = c.writeImages(outputPath, markdown, images)
+		if err != nil {
+			return fmt.Errorf("writing images: %w", err)
+		}
+	}
+
 	return os.WriteFile(outputPath, []byte(markdown), 0644)
+}
+
+// writeImages writes images to disk and updates markdown with correct paths
+func (c *Converter) writeImages(outputPath, markdown string, images []*models.ImageItem) (string, error) {
+	writer, err := imageutil.NewImageWriter(outputPath)
+	if err != nil {
+		return markdown, err
+	}
+
+	// Build map of image IDs to output paths
+	imageMap := make(map[string]string)
+
+	for _, img := range images {
+		relativePath, err := writer.WriteImage(img)
+		if err != nil {
+			// Log warning but continue
+			continue
+		}
+		imageMap[img.ID] = relativePath
+	}
+
+	// Replace image placeholders in markdown
+	// The placeholder format is ![image_001] (from WordTypeImage.ToText)
+	for id, path := range imageMap {
+		// Find the image in the list to get alt text
+		altText := "image"
+		for _, img := range images {
+			if img.ID == id {
+				if img.AltText != "" {
+					altText = img.AltText
+				}
+				break
+			}
+		}
+		placeholder := fmt.Sprintf("![%s]", id)
+		replacement := fmt.Sprintf("![%s](%s)", altText, path)
+		markdown = strings.ReplaceAll(markdown, placeholder, replacement)
+	}
+
+	return markdown, nil
 }
 
 // Convert converts DOCX data to Markdown
 func (c *Converter) Convert(data []byte) (string, error) {
+	markdown, _, err := c.ConvertWithImages(data)
+	return markdown, err
+}
+
+// ConvertWithImages converts DOCX data to Markdown and returns extracted images
+func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem, error) {
 	// Parse DOCX
 	parser, err := docx.NewParser(data)
 	if err != nil {
-		return "", fmt.Errorf("parsing DOCX: %w", err)
+		return "", nil, fmt.Errorf("parsing DOCX: %w", err)
 	}
 
 	if err := parser.Parse(); err != nil {
-		return "", fmt.Errorf("validating DOCX: %w", err)
+		return "", nil, fmt.Errorf("validating DOCX: %w", err)
 	}
 
 	if c.options.OnDocumentParsed != nil {
@@ -135,7 +199,7 @@ func (c *Converter) Convert(data []byte) (string, error) {
 	// Create extractor
 	extractor, err := docx.NewExtractor(parser)
 	if err != nil {
-		return "", fmt.Errorf("creating extractor: %w", err)
+		return "", nil, fmt.Errorf("creating extractor: %w", err)
 	}
 
 	// Report styles if callback is set
@@ -145,9 +209,9 @@ func (c *Converter) Convert(data []byte) (string, error) {
 	}
 
 	// Extract content to Page format
-	page, err := extractor.Extract()
+	page, images, err := extractor.Extract()
 	if err != nil {
-		return "", fmt.Errorf("extracting content: %w", err)
+		return "", nil, fmt.Errorf("extracting content: %w", err)
 	}
 
 	// Run transformation pipeline
@@ -167,5 +231,5 @@ func (c *Converter) Convert(data []byte) (string, error) {
 		}
 	}
 
-	return output.String(), nil
+	return output.String(), images, nil
 }

@@ -24,6 +24,7 @@ func main() {
 	noLists := flag.Bool("no-lists", false, "Don't detect lists [PDF only]")
 	noHeadings := flag.Bool("no-headings", false, "Don't detect headings [PDF only]")
 	noFormatting := flag.Bool("no-formatting", false, "Don't preserve bold/italic formatting")
+	noImages := flag.Bool("no-images", false, "Don't extract images")
 	verbose := flag.Bool("v", false, "Verbose output")
 
 	flag.Parse()
@@ -67,12 +68,14 @@ func main() {
 			noLists:         *noLists,
 			noHeadings:      *noHeadings,
 			noFormatting:    *noFormatting,
+			noImages:        *noImages,
 			verbose:         *verbose,
 		})
 
 	case ".docx":
 		err = convertDOCX(*inputFile, *outputFile, &docxOptions{
 			noFormatting: *noFormatting,
+			noImages:     *noImages,
 			verbose:      *verbose,
 		})
 
@@ -100,6 +103,7 @@ type pdfOptions struct {
 	noLists          bool
 	noHeadings       bool
 	noFormatting     bool
+	noImages         bool
 	verbose          bool
 }
 
@@ -136,6 +140,9 @@ func convertPDF(inputFile, outputFile string, opts *pdfOptions) error {
 	if opts.noFormatting {
 		converterOpts = append(converterOpts, pdf2md.WithPreserveFormatting(false))
 	}
+	if opts.noImages {
+		converterOpts = append(converterOpts, pdf2md.WithExtractImages(false))
+	}
 
 	if opts.verbose {
 		converterOpts = append(converterOpts, pdf2md.WithOnPageParsed(func(pageNum, totalPages int) {
@@ -152,6 +159,7 @@ func convertPDF(inputFile, outputFile string, opts *pdfOptions) error {
 
 type docxOptions struct {
 	noFormatting bool
+	noImages     bool
 	verbose      bool
 }
 
@@ -160,6 +168,9 @@ func convertDOCX(inputFile, outputFile string, opts *docxOptions) error {
 
 	if opts.noFormatting {
 		converterOpts = append(converterOpts, docx2md.WithPreserveFormatting(false))
+	}
+	if opts.noImages {
+		converterOpts = append(converterOpts, docx2md.WithPreserveImages(false))
 	}
 
 	if opts.verbose {

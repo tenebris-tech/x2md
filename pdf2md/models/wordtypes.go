@@ -40,6 +40,15 @@ var (
 			return fmt.Sprintf("(^%s)", s)
 		},
 	}
+	// WordTypeImage represents an embedded image reference
+	// The String field contains the image ID, which maps to an ImageItem
+	WordTypeImage = &WordType{
+		Name: "IMAGE",
+		toTextFunc: func(s string) string {
+			// s is the image ID; actual path substitution happens in converter
+			return fmt.Sprintf("![%s]", s)
+		},
+	}
 )
 
 // WordFormat represents text formatting

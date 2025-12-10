@@ -8,13 +8,15 @@ This file tracks pending improvements and known issues for x2md.
 All major features implemented and tested.
 
 ### DOCX Conversion - Initial Release
-Core functionality implemented:
-- Paragraph extraction with formatting
-- Heading detection from Word styles
-- List processing (bullet and numbered)
-- Table conversion to markdown
-- Hyperlink conversion
-- Text run merging per OOXML spec
+Core functionality implemented.
+
+### Image Extraction - Implemented
+Both PDF and DOCX now support image extraction:
+- Images saved to `{output}_images/` subdirectory
+- Markdown image links generated: `![alt](path)`
+- JPEG images extracted directly
+- PNG wrapping for raw pixel data
+- Use `--no-images` flag to disable
 
 ---
 
@@ -102,15 +104,14 @@ Test with `CPP_ND_V3.0E.pdf` (245 pages):
 
 ### Known Limitations
 
-1. **Images**: Not extracted (references only)
-2. **Nested Tables**: May not render perfectly
-3. **Advanced Formatting**: Text boxes, shapes ignored
-4. **Track Changes**: Comments and revisions not included
-5. **Headers/Footers**: Document headers/footers not extracted
+1. **Nested Tables**: May not render perfectly
+2. **Advanced Formatting**: Text boxes, shapes ignored
+3. **Track Changes**: Comments and revisions not included
+4. **Headers/Footers**: Document headers/footers not extracted
 
 ### Future Improvements
 
-- [ ] Image extraction to separate files
+- [x] Image extraction to separate files (implemented)
 - [ ] Footnote/endnote support
 - [ ] Header/footer extraction option
 - [ ] Better nested list handling

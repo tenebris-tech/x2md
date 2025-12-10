@@ -19,6 +19,10 @@ type Extractor struct {
 
 	// List tracking
 	listCounters map[int]map[int]int // numId -> level -> counter
+
+	// Image tracking
+	images       []*models.ImageItem
+	imageCounter int
 }
 
 // NewExtractor creates a new document extractor
@@ -48,23 +52,23 @@ func NewExtractor(parser *Parser) (*Extractor, error) {
 }
 
 // Extract converts the DOCX document to Page format
-func (e *Extractor) Extract() (*models.Page, error) {
+func (e *Extractor) Extract() (*models.Page, []*models.ImageItem, error) {
 	// Read raw document XML for custom parsing
 	docData, err := e.parser.ReadFile("word/document.xml")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Parse document body content
 	items, err := e.parseDocumentBody(docData)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	return &models.Page{
 		Index: 0,
 		Items: items,
-	}, nil
+	}, e.images, nil
 }
 
 // parseDocumentBody parses the document body into LineItems
@@ -245,6 +249,15 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 				// Reset run-level formatting
 				currentBold = false
 				currentItalic = false
+			case "drawing":
+				// Parse drawing element for images
+				imgWord, err := e.parseDrawingElement(decoder)
+				if err != nil {
+					return nil, err
+				}
+				if imgWord != nil {
+					words = append(words, imgWord)
+				}
 			default:
 				depth++
 			}
@@ -564,4 +577,174 @@ func normalizeSpaces(s string) string {
 		}
 	}
 	return result.String()
+}
+
+// parseDrawingElement parses a drawing element and extracts image information.
+// Returns a Word with type IMAGE containing the image ID reference.
+func (e *Extractor) parseDrawingElement(decoder *xml.Decoder) (*models.Word, error) {
+	var embedID string
+	var altText string
+	var depth int
+
+	for {
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			localName := stripNamespacePrefix(t.Name.Local)
+
+			switch localName {
+			case "docPr":
+				// Get alt text from description attribute
+				for _, attr := range t.Attr {
+					name := stripNamespacePrefix(attr.Name.Local)
+					if name == "descr" {
+						altText = attr.Value
+					} else if name == "name" && altText == "" {
+						// Use name as fallback for alt text
+						altText = attr.Value
+					}
+				}
+			case "blip":
+				// Get the embed relationship ID
+				for _, attr := range t.Attr {
+					name := stripNamespacePrefix(attr.Name.Local)
+					if name == "embed" {
+						embedID = attr.Value
+					}
+				}
+			default:
+				depth++
+			}
+
+		case xml.EndElement:
+			localName := stripNamespacePrefix(t.Name.Local)
+			if localName == "drawing" {
+				// End of drawing element
+				if embedID != "" {
+					return e.extractAndRegisterImage(embedID, altText)
+				}
+				return nil, nil
+			}
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+
+	return nil, nil
+}
+
+// extractAndRegisterImage extracts image data from the DOCX archive and registers it.
+// Returns a Word with type IMAGE containing the image ID reference.
+func (e *Extractor) extractAndRegisterImage(relID, altText string) (*models.Word, error) {
+	// Check if this is actually an image relationship
+	if !e.relationships.IsImage(relID) {
+		return nil, nil
+	}
+
+	// Get the target path from relationships
+	target := e.relationships.GetTarget(relID)
+	if target == "" {
+		return nil, nil
+	}
+
+	// Normalize path - relationships use relative paths from word/ directory
+	imagePath := target
+	if !strings.HasPrefix(target, "word/") {
+		imagePath = "word/" + target
+	}
+
+	// Read the image data from the DOCX archive
+	data, err := e.parser.ReadFile(imagePath)
+	if err != nil {
+		// Image not found, skip silently
+		return nil, nil
+	}
+
+	// Generate unique ID
+	e.imageCounter++
+	imageID := fmt.Sprintf("image_%03d", e.imageCounter)
+
+	// Detect format from magic bytes
+	format := detectImageFormat(data)
+
+	// Create ImageItem
+	img := &models.ImageItem{
+		ID:         imageID,
+		SourcePath: imagePath,
+		Format:     format,
+		Data:       data,
+		AltText:    altText,
+		PageIndex:  0, // DOCX doesn't have pages in the same way
+	}
+
+	// Register the image
+	e.images = append(e.images, img)
+
+	// Return a word referencing this image
+	return &models.Word{
+		String: imageID,
+		Type:   models.WordTypeImage,
+	}, nil
+}
+
+// detectImageFormat detects image format from magic bytes
+func detectImageFormat(data []byte) string {
+	if len(data) < 8 {
+		return "bin"
+	}
+
+	// JPEG: FF D8 FF
+	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+		return "jpeg"
+	}
+
+	// PNG: 89 50 4E 47 0D 0A 1A 0A
+	if len(data) >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+		return "png"
+	}
+
+	// GIF: 47 49 46 38
+	if len(data) >= 4 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x38 {
+		return "gif"
+	}
+
+	// BMP: 42 4D
+	if len(data) >= 2 && data[0] == 0x42 && data[1] == 0x4D {
+		return "bmp"
+	}
+
+	// TIFF: 49 49 2A 00 (little-endian) or 4D 4D 00 2A (big-endian)
+	if len(data) >= 4 {
+		if (data[0] == 0x49 && data[1] == 0x49 && data[2] == 0x2A && data[3] == 0x00) ||
+			(data[0] == 0x4D && data[1] == 0x4D && data[2] == 0x00 && data[3] == 0x2A) {
+			return "tiff"
+		}
+	}
+
+	// EMF/WMF are common in DOCX
+	if len(data) >= 4 {
+		// EMF signature check
+		if data[0] == 0x01 && data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x00 {
+			return "emf"
+		}
+		// WMF placeable header
+		if data[0] == 0xD7 && data[1] == 0xCD && data[2] == 0xC6 && data[3] == 0x9A {
+			return "wmf"
+		}
+	}
+
+	return "bin"
+}
+
+// GetImages returns all extracted images
+func (e *Extractor) GetImages() []*models.ImageItem {
+	return e.images
 }

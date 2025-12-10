@@ -189,3 +189,17 @@ type TextBlock struct {
 	Category string
 	Text     string
 }
+
+// ImageItem represents an extracted image from a document
+type ImageItem struct {
+	ID         string  // Unique identifier (e.g., "image_001")
+	SourcePath string  // Original path within document
+	OutputPath string  // Relative path for markdown link
+	Format     string  // Image format: "jpeg", "png", "gif", etc.
+	Data       []byte  // Raw image data
+	AltText    string  // Alt text for markdown
+	PageIndex  int     // Page where image appears
+	Y          float64 // Y position for ordering within page
+	Width      int     // Image width in pixels
+	Height     int     // Image height in pixels
+}

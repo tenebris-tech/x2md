@@ -954,3 +954,235 @@ func (p *Parser) decodeLZW(data []byte) ([]byte, error) {
 	// LZW decoding is complex - for now, return an error to be handled
 	return nil, fmt.Errorf("LZW decoding not fully implemented")
 }
+
+// ImageData contains extracted image information from a PDF
+type ImageData struct {
+	Data             []byte
+	Width            int
+	Height           int
+	BitsPerComponent int
+	ColorSpace       string
+	Filter           string // Original filter type
+	Format           string // Output format (jpeg, png)
+}
+
+// GetXObjects returns the XObject dictionary from a page's resources
+func (p *Parser) GetXObjects(page *Object) (map[string]interface{}, error) {
+	resources := p.getPageResources(page)
+	if resources == nil {
+		return nil, nil
+	}
+
+	xobjects, ok := resources["XObject"]
+	if !ok {
+		return nil, nil
+	}
+
+	switch x := xobjects.(type) {
+	case map[string]interface{}:
+		return x, nil
+	case *Reference:
+		obj, err := p.GetObject(x.ObjectNum)
+		if err != nil {
+			return nil, err
+		}
+		return obj.Dict, nil
+	}
+
+	return nil, nil
+}
+
+// getPageResources gets the resources dictionary for a page
+func (p *Parser) getPageResources(page *Object) map[string]interface{} {
+	if resources, ok := page.Dict["Resources"]; ok {
+		switch r := resources.(type) {
+		case map[string]interface{}:
+			return r
+		case *Reference:
+			resObj, err := p.GetObject(r.ObjectNum)
+			if err == nil {
+				return resObj.Dict
+			}
+		}
+	}
+	return nil
+}
+
+// GetImageXObject retrieves an image XObject by name from a page
+func (p *Parser) GetImageXObject(page *Object, name string) (*Object, error) {
+	xobjects, err := p.GetXObjects(page)
+	if err != nil || xobjects == nil {
+		return nil, err
+	}
+
+	// Try with and without leading slash
+	var ref *Reference
+	if r, ok := xobjects[name].(*Reference); ok {
+		ref = r
+	} else if r, ok := xobjects["/"+name].(*Reference); ok {
+		ref = r
+	} else if r, ok := xobjects[strings.TrimPrefix(name, "/")].(*Reference); ok {
+		ref = r
+	}
+
+	if ref == nil {
+		return nil, fmt.Errorf("XObject %s not found", name)
+	}
+
+	obj, err := p.GetObject(ref.ObjectNum)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify it's an image
+	subtype, _ := obj.Dict["Subtype"].(string)
+	if subtype != "/Image" {
+		return nil, fmt.Errorf("XObject %s is not an image (subtype: %s)", name, subtype)
+	}
+
+	return obj, nil
+}
+
+// ExtractImage extracts image data from an image XObject
+func (p *Parser) ExtractImage(imgObj *Object) (*ImageData, error) {
+	if imgObj == nil || imgObj.Dict == nil {
+		return nil, fmt.Errorf("invalid image object")
+	}
+
+	// Get image properties
+	width := 0
+	if w, ok := imgObj.Dict["Width"].(float64); ok {
+		width = int(w)
+	}
+	height := 0
+	if h, ok := imgObj.Dict["Height"].(float64); ok {
+		height = int(h)
+	}
+	bitsPerComponent := 8
+	if b, ok := imgObj.Dict["BitsPerComponent"].(float64); ok {
+		bitsPerComponent = int(b)
+	}
+
+	// Get color space
+	colorSpace := "DeviceRGB"
+	if cs, ok := imgObj.Dict["ColorSpace"].(string); ok {
+		colorSpace = strings.TrimPrefix(cs, "/")
+	} else if csRef, ok := imgObj.Dict["ColorSpace"].(*Reference); ok {
+		// Color space might be a reference to an array (e.g., Indexed)
+		csObj, err := p.GetObject(csRef.ObjectNum)
+		if err == nil && csObj.Array != nil && len(csObj.Array) > 0 {
+			if csName, ok := csObj.Array[0].(string); ok {
+				colorSpace = strings.TrimPrefix(csName, "/")
+			}
+		}
+	} else if csArr, ok := imgObj.Dict["ColorSpace"].([]interface{}); ok {
+		if len(csArr) > 0 {
+			if csName, ok := csArr[0].(string); ok {
+				colorSpace = strings.TrimPrefix(csName, "/")
+			}
+		}
+	}
+
+	// Get filter
+	filter := ""
+	if f, ok := imgObj.Dict["Filter"].(string); ok {
+		filter = f
+	} else if fArr, ok := imgObj.Dict["Filter"].([]interface{}); ok {
+		if len(fArr) > 0 {
+			if fName, ok := fArr[0].(string); ok {
+				filter = fName
+			}
+		}
+	}
+
+	// Extract and decode the image data
+	data := imgObj.Stream
+	format := "bin"
+
+	switch filter {
+	case "/DCTDecode":
+		// JPEG data - can be written directly
+		format = "jpeg"
+		// DCTDecode streams are already JPEG, no decoding needed
+
+	case "/FlateDecode":
+		// Compressed raw pixels - decode
+		decoded, err := p.decodeFlateDecode(data)
+		if err != nil {
+			return nil, fmt.Errorf("decoding FlateDecode: %w", err)
+		}
+		data = decoded
+		format = "png" // Will need to be wrapped in PNG format
+
+	case "/JPXDecode":
+		// JPEG 2000 - can be written directly
+		format = "jp2"
+
+	case "":
+		// No filter - raw data
+		format = "png" // Raw data will need PNG wrapping
+
+	default:
+		// Try to decode using DecodeStream
+		decoded, err := p.DecodeStream(imgObj)
+		if err != nil {
+			return nil, fmt.Errorf("unsupported filter %s: %w", filter, err)
+		}
+		data = decoded
+		format = "png"
+	}
+
+	return &ImageData{
+		Data:             data,
+		Width:            width,
+		Height:           height,
+		BitsPerComponent: bitsPerComponent,
+		ColorSpace:       colorSpace,
+		Filter:           filter,
+		Format:           format,
+	}, nil
+}
+
+// GetAllPageImages extracts all images from a page
+func (p *Parser) GetAllPageImages(pageIndex int) ([]*ImageData, []string, error) {
+	page, err := p.GetPage(pageIndex)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	xobjects, err := p.GetXObjects(page)
+	if err != nil || xobjects == nil {
+		return nil, nil, nil
+	}
+
+	var images []*ImageData
+	var names []string
+
+	for name, xobjRef := range xobjects {
+		ref, ok := xobjRef.(*Reference)
+		if !ok {
+			continue
+		}
+
+		obj, err := p.GetObject(ref.ObjectNum)
+		if err != nil {
+			continue
+		}
+
+		// Check if it's an image
+		subtype, _ := obj.Dict["Subtype"].(string)
+		if subtype != "/Image" {
+			continue
+		}
+
+		imgData, err := p.ExtractImage(obj)
+		if err != nil {
+			continue
+		}
+
+		images = append(images, imgData)
+		names = append(names, strings.TrimPrefix(name, "/"))
+	}
+
+	return images, names, nil
+}
