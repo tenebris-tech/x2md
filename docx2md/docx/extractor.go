@@ -467,12 +467,12 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 		// Get prefix
 		prefix := e.numbering.GetListPrefix(numID, level, counter)
 
-		// Add indentation for nested lists
-		indent := strings.Repeat("  ", level)
+		// Store list level on LineItem (indentation handled at render time)
+		lineItem.ListLevel = level
 
 		// Prepend prefix to first word
 		if len(lineItem.Words) > 0 {
-			lineItem.Words[0].String = indent + prefix + lineItem.Words[0].String
+			lineItem.Words[0].String = prefix + lineItem.Words[0].String
 		}
 	}
 

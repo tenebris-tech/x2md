@@ -327,3 +327,35 @@ func TestLinesToTextMixedTableAndText(t *testing.T) {
 		t.Error("Output should contain 'Outro'")
 	}
 }
+
+func TestLinesToTextNestedLists(t *testing.T) {
+	lines := []*LineItem{
+		{
+			Type:      BlockTypeList,
+			ListLevel: 0,
+			Words:     []*Word{{String: "-"}, {String: "Level"}, {String: "0"}},
+		},
+		{
+			Type:      BlockTypeList,
+			ListLevel: 1,
+			Words:     []*Word{{String: "-"}, {String: "Level"}, {String: "1"}},
+		},
+		{
+			Type:      BlockTypeList,
+			ListLevel: 2,
+			Words:     []*Word{{String: "-"}, {String: "Level"}, {String: "2"}},
+		},
+		{
+			Type:      BlockTypeList,
+			ListLevel: 0,
+			Words:     []*Word{{String: "-"}, {String: "Back"}, {String: "to"}, {String: "0"}},
+		},
+	}
+
+	got := LinesToText(lines, false)
+	want := "- Level 0\n  - Level 1\n    - Level 2\n- Back to 0\n"
+
+	if got != want {
+		t.Errorf("LinesToText() = %q, want %q", got, want)
+	}
+}

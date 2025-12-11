@@ -45,9 +45,11 @@ type LineItem struct {
 	ParsedElements *ParsedElements
 	Font           string
 	// Table-related fields
-	IsTableRow     bool      // Whether this line is part of a table
-	IsTableHeader  bool      // Whether this is a table header row
-	TableColumns   []string  // Text content of each column (for table rows)
+	IsTableRow    bool     // Whether this line is part of a table
+	IsTableHeader bool     // Whether this is a table header row
+	TableColumns  []string // Text content of each column (for table rows)
+	// List-related fields
+	ListLevel int // 0-based nesting level for list items
 }
 
 // Text returns the text content of the line
@@ -73,6 +75,7 @@ func (l *LineItem) Copy() *LineItem {
 		IsTableRow:     l.IsTableRow,
 		IsTableHeader:  l.IsTableHeader,
 		TableColumns:   append([]string{}, l.TableColumns...),
+		ListLevel:      l.ListLevel,
 	}
 }
 

@@ -189,6 +189,11 @@ func LinesToText(lineItems []*LineItem, disableInlineFormats bool) string {
 			headerWritten = false
 		}
 
+		// Add indentation for nested list items
+		if line.Type == BlockTypeList && line.ListLevel > 0 {
+			text.WriteString(strings.Repeat("  ", line.ListLevel))
+		}
+
 		// Regular line processing
 		for i, word := range line.Words {
 			wordFormat := word.Format
