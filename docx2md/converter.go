@@ -214,6 +214,9 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 		return "", nil, fmt.Errorf("extracting content: %w", err)
 	}
 
+	// Collect footnotes/endnotes
+	footnotes := extractor.GetCollectedFootnotes()
+
 	// Run transformation pipeline
 	pipelineOpts := &transform.PipelineOptions{
 		PreserveFormatting: c.options.PreserveFormatting,
@@ -228,6 +231,14 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 			if text, ok := item.(string); ok {
 				output.WriteString(text)
 			}
+		}
+	}
+
+	// Append footnotes section if any
+	if len(footnotes) > 0 {
+		output.WriteString("\n\n## Footnotes\n\n")
+		for _, fn := range footnotes {
+			output.WriteString(fmt.Sprintf("[^%s]: %s\n\n", fn.ID, fn.Content))
 		}
 	}
 

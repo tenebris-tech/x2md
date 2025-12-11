@@ -31,7 +31,7 @@ var (
 		AttachWithoutWhitespace: true,
 		PlainTextFormat:        true,
 		toTextFunc: func(s string) string {
-			return fmt.Sprintf("^%s", s)
+			return fmt.Sprintf("[^%s]", s)
 		},
 	}
 	WordTypeFootnote = &WordType{

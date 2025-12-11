@@ -21,6 +21,8 @@ type Parser struct {
 	styles        *Styles
 	numbering     *Numbering
 	relationships *Relationships
+	footnotes     *Footnotes
+	endnotes      *Endnotes
 }
 
 // NewParser creates a parser from byte data
@@ -124,6 +126,38 @@ func (p *Parser) GetRelationships() (*Relationships, error) {
 
 	p.relationships = rels
 	return rels, nil
+}
+
+// GetFootnotes returns the parsed footnotes
+func (p *Parser) GetFootnotes() (*Footnotes, error) {
+	if p.footnotes != nil {
+		return p.footnotes, nil
+	}
+
+	footnotes := &Footnotes{}
+	if err := p.readXML("word/footnotes.xml", footnotes); err != nil {
+		// Footnotes file is optional
+		return &Footnotes{}, nil
+	}
+
+	p.footnotes = footnotes
+	return footnotes, nil
+}
+
+// GetEndnotes returns the parsed endnotes
+func (p *Parser) GetEndnotes() (*Endnotes, error) {
+	if p.endnotes != nil {
+		return p.endnotes, nil
+	}
+
+	endnotes := &Endnotes{}
+	if err := p.readXML("word/endnotes.xml", endnotes); err != nil {
+		// Endnotes file is optional
+		return &Endnotes{}, nil
+	}
+
+	p.endnotes = endnotes
+	return endnotes, nil
 }
 
 // readXML reads and parses an XML file from the ZIP archive

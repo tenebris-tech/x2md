@@ -16,6 +16,8 @@ type Extractor struct {
 	styles        *Styles
 	numbering     *Numbering
 	relationships *Relationships
+	footnotes     *Footnotes
+	endnotes      *Endnotes
 
 	// List tracking
 	listCounters map[int]map[int]int // numId -> level -> counter
@@ -23,6 +25,10 @@ type Extractor struct {
 	// Image tracking
 	images       []*models.ImageItem
 	imageCounter int
+
+	// Footnote/endnote tracking (IDs in order of appearance)
+	footnoteRefs []string
+	endnoteRefs  []string
 }
 
 // NewExtractor creates a new document extractor
@@ -42,11 +48,23 @@ func NewExtractor(parser *Parser) (*Extractor, error) {
 		return nil, fmt.Errorf("getting relationships: %w", err)
 	}
 
+	footnotes, err := parser.GetFootnotes()
+	if err != nil {
+		return nil, fmt.Errorf("getting footnotes: %w", err)
+	}
+
+	endnotes, err := parser.GetEndnotes()
+	if err != nil {
+		return nil, fmt.Errorf("getting endnotes: %w", err)
+	}
+
 	return &Extractor{
 		parser:        parser,
 		styles:        styles,
 		numbering:     numbering,
 		relationships: rels,
+		footnotes:     footnotes,
+		endnotes:      endnotes,
 		listCounters:  make(map[int]map[int]int),
 	}, nil
 }
@@ -257,6 +275,34 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 				}
 				if imgWord != nil {
 					words = append(words, imgWord)
+				}
+			case "footnoteReference":
+				// Parse footnote reference
+				for _, attr := range t.Attr {
+					if stripNamespacePrefix(attr.Name.Local) == "id" {
+						// Skip separators (id="0" and id="-1")
+						if attr.Value != "0" && attr.Value != "-1" {
+							e.footnoteRefs = append(e.footnoteRefs, attr.Value)
+							words = append(words, &models.Word{
+								String: attr.Value,
+								Type:   models.WordTypeFootnoteLink,
+							})
+						}
+					}
+				}
+			case "endnoteReference":
+				// Parse endnote reference
+				for _, attr := range t.Attr {
+					if stripNamespacePrefix(attr.Name.Local) == "id" {
+						// Skip separators (id="0" and id="-1")
+						if attr.Value != "0" && attr.Value != "-1" {
+							e.endnoteRefs = append(e.endnoteRefs, attr.Value)
+							words = append(words, &models.Word{
+								String: attr.Value,
+								Type:   models.WordTypeFootnoteLink,
+							})
+						}
+					}
 				}
 			default:
 				depth++
@@ -747,4 +793,83 @@ func detectImageFormat(data []byte) string {
 // GetImages returns all extracted images
 func (e *Extractor) GetImages() []*models.ImageItem {
 	return e.images
+}
+
+// FootnoteItem represents a collected footnote/endnote for output
+type FootnoteItem struct {
+	ID        string
+	Content   string
+	IsEndnote bool
+}
+
+// GetCollectedFootnotes returns all footnotes and endnotes in order of appearance
+func (e *Extractor) GetCollectedFootnotes() []FootnoteItem {
+	var result []FootnoteItem
+
+	// Collect footnotes
+	for _, id := range e.footnoteRefs {
+		content := e.getFootnoteContent(id)
+		if content != "" {
+			result = append(result, FootnoteItem{ID: id, Content: content})
+		}
+	}
+
+	// Collect endnotes
+	for _, id := range e.endnoteRefs {
+		content := e.getEndnoteContent(id)
+		if content != "" {
+			result = append(result, FootnoteItem{ID: id, Content: content, IsEndnote: true})
+		}
+	}
+
+	return result
+}
+
+// getFootnoteContent extracts text content from a footnote by ID
+func (e *Extractor) getFootnoteContent(id string) string {
+	if e.footnotes == nil {
+		return ""
+	}
+	for _, fn := range e.footnotes.Footnotes {
+		if fn.ID == id && fn.Type == "" { // Skip separators
+			return e.extractParagraphsText(fn.Paragraphs)
+		}
+	}
+	return ""
+}
+
+// getEndnoteContent extracts text content from an endnote by ID
+func (e *Extractor) getEndnoteContent(id string) string {
+	if e.endnotes == nil {
+		return ""
+	}
+	for _, en := range e.endnotes.Endnotes {
+		if en.ID == id && en.Type == "" { // Skip separators
+			return e.extractParagraphsText(en.Paragraphs)
+		}
+	}
+	return ""
+}
+
+// extractParagraphsText extracts plain text from a slice of paragraphs
+func (e *Extractor) extractParagraphsText(paras []Paragraph) string {
+	var parts []string
+	for _, para := range paras {
+		text := e.extractParagraphText(para)
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// extractParagraphText extracts plain text from a single paragraph
+func (e *Extractor) extractParagraphText(para Paragraph) string {
+	var text strings.Builder
+	for _, run := range para.Runs {
+		for _, t := range run.Text {
+			text.WriteString(t.Value)
+		}
+	}
+	return strings.TrimSpace(text.String())
 }

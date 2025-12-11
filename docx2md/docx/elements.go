@@ -322,3 +322,31 @@ type Shading struct {
 	Color string `xml:"color,attr"`
 	Fill  string `xml:"fill,attr"`
 }
+
+// Footnotes represents the footnotes file (word/footnotes.xml)
+type Footnotes struct {
+	XMLName   xml.Name   `xml:"footnotes"`
+	Footnotes []Footnote `xml:"footnote"`
+}
+
+// Footnote represents a single footnote
+type Footnote struct {
+	XMLName    xml.Name    `xml:"footnote"`
+	ID         string      `xml:"id,attr"`
+	Type       string      `xml:"type,attr"` // "separator", "continuationSeparator", or empty for regular
+	Paragraphs []Paragraph `xml:"p"`
+}
+
+// Endnotes represents the endnotes file (word/endnotes.xml)
+type Endnotes struct {
+	XMLName  xml.Name  `xml:"endnotes"`
+	Endnotes []Endnote `xml:"endnote"`
+}
+
+// Endnote represents a single endnote
+type Endnote struct {
+	XMLName    xml.Name    `xml:"endnote"`
+	ID         string      `xml:"id,attr"`
+	Type       string      `xml:"type,attr"` // "separator", "continuationSeparator", or empty for regular
+	Paragraphs []Paragraph `xml:"p"`
+}
