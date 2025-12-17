@@ -128,20 +128,6 @@ None
 
 ---
 
-## Uncommitted Changes
-
-The `nested-lists` branch has uncommitted changes in `pdf2md/transform/compact_lines.go`:
-
-```go
-// Added: extractTrailingParenthesizedNumber()
-// Detects footnotes like "word(1)" -> "word[^1]"
-// Includes false-positive filtering for man page references
-```
-
-**Status**: Ready to commit. Tests pass.
-
----
-
 ## Test Files
 
 Located in `private/`:
@@ -247,12 +233,19 @@ DOCX File (ZIP)
 ## Git History (Recent)
 
 ```
+02f3bdd Add Claude resumption instructions to STATUS.md
+e186c13 Add STATUS.md, update documentation, enhance footnote detection
 9649d07 Add footnote/endnote support for DOCX
 0c02e99 Add nested list support for DOCX and PDF
 d6aa240 Add image extraction test plan
 c6e4912 Add image extraction for PDF and DOCX files
-08e5d90 Update documentation for PDF and DOCX conversion
 ```
+
+## Open Pull Request
+
+**PR #1**: `nested-lists` → `alpha`
+- URL: https://github.com/tenebris-tech/x2md/pull/1
+- Status: Open (ready for review/merge)
 
 ---
 
