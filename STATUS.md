@@ -6,6 +6,21 @@
 
 ---
 
+## For Claude: How to Resume This Project
+
+When starting a new session, tell Claude:
+
+> "Read STATUS.md, CLAUDE.md, and TODO.md in this repo. The project is x2md,
+> a PDF/DOCX to Markdown converter. Continue with the next priority task."
+
+Key context:
+- All 71 tests pass, build is clean
+- Main issue: header over-detection on simple PDFs (see Next Steps section)
+- The `nested-lists` branch has all current work
+- No DOCX test files exist in `private/` - only PDFs
+
+---
+
 ## Quick Start for New Session
 
 ```bash
@@ -198,8 +213,14 @@ DOCX File (ZIP)
 
 ### Immediate (Before Release)
 1. [ ] **Fix Header Over-detection**: Improve algorithm for simple PDFs
-   - Consider minimum font size variance threshold
-   - Add fallback when no clear heading hierarchy exists
+   - **Problem**: `basic-text.pdf` outputs all lines as `## ` (H2)
+   - **Root cause**: `pdf2md/transform/detect_headers.go` uses font height
+     comparison to detect headings. When a PDF has minimal font variation,
+     the algorithm incorrectly promotes most lines.
+   - **Suggested fix**: Add minimum height difference threshold, or detect
+     when document lacks clear heading hierarchy and disable detection.
+   - **Test command**: `./x2md private/basic-text.pdf && head -30 private/basic-text.md`
+   - **Expected**: Normal paragraphs, not all H2 headers
 
 2. [ ] **Add Integration Tests**: Create automated tests with real files
    - PDF table detection verification
