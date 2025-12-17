@@ -1389,6 +1389,15 @@ func (c *CompactLines) detectElements(words []*models.Word, items []*models.Text
 				elements.FootnoteLinks = append(elements.FootnoteLinks, num)
 			}
 		}
+
+		// Detect parenthesized footnotes attached to words like "footnote(1)"
+		// Standalone "(1)" patterns are not converted here - they rely on superscript detection above
+		// because standalone (n) could be section references in technical docs (e.g., man pages)
+		if num, prefix, ok := extractTrailingParenthesizedNumber(word.String); ok && prefix != "" {
+			word.String = prefix + "[^" + strconv.Itoa(num) + "]"
+			// Don't set Type - already formatted inline
+			elements.FootnoteLinks = append(elements.FootnoteLinks, num)
+		}
 	}
 
 	return elements
@@ -1417,6 +1426,55 @@ func isNumber(s string) bool {
 		}
 	}
 	return true
+}
+
+// extractTrailingParenthesizedNumber checks if string ends with a parenthesized number like (1), (2), etc.
+// Returns the number, any prefix text, and true if matched.
+// Examples: "(1)" -> 1, "", true; "footnote(1)" -> 1, "footnote", true
+// Only matches small numbers (1-99) to avoid false positives with technical references.
+func extractTrailingParenthesizedNumber(s string) (int, string, bool) {
+	// Find the last '(' in the string
+	openIdx := -1
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '(' {
+			openIdx = i
+			break
+		}
+	}
+	if openIdx == -1 || s[len(s)-1] != ')' {
+		return 0, "", false
+	}
+
+	inner := s[openIdx+1 : len(s)-1]
+	if !isNumber(inner) {
+		return 0, "", false
+	}
+	// Skip 3+ digit numbers - unlikely to be footnotes
+	if len(inner) > 2 {
+		return 0, "", false
+	}
+	num, err := strconv.Atoi(inner)
+	if err != nil {
+		return 0, "", false
+	}
+
+	prefix := s[:openIdx]
+
+	// Skip common false positives - number words, Unix man page references
+	prefixLower := strings.ToLower(prefix)
+	falsePositives := []string{
+		"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+		// Common Unix commands/functions that use (n) for man page sections
+		"time", "date", "daytime", "printf", "scanf", "malloc", "free", "exit",
+		"open", "close", "read", "write", "socket", "connect", "bind", "listen",
+	}
+	for _, fp := range falsePositives {
+		if prefixLower == fp {
+			return 0, "", false
+		}
+	}
+
+	return num, prefix, true
 }
 
 func isDigit(c byte) bool {
