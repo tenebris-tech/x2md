@@ -8,6 +8,17 @@ import (
 	"github.com/tenebris-tech/x2md/pdf2md/models"
 )
 
+// Header detection thresholds
+const (
+	// MinHeightRatio is the minimum ratio of height to mostUsedHeight for header detection.
+	// A line must be at least 50% taller than body text to be considered a header.
+	MinHeightRatio = 1.5
+
+	// MinHeightDifference is the minimum absolute height difference for header detection.
+	// A line must be at least 4 points taller than body text to be considered a header.
+	MinHeightDifference = 4
+)
+
 // DetectHeaders detects headlines based on text heights
 type DetectHeaders struct{}
 
@@ -28,11 +39,22 @@ func (d *DetectHeaders) Transform(result *models.ParseResult) *models.ParseResul
 	heightBasedDetection := mostUsedHeight >= 8
 
 	if heightBasedDetection {
+		// Calculate minimum height threshold for header detection
+		minHeightByRatio := int(float64(mostUsedHeight) * MinHeightRatio)
+		minHeightByDiff := mostUsedHeight + MinHeightDifference
+		minHeightThreshold := minHeightByRatio
+		if minHeightByDiff > minHeightThreshold {
+			minHeightThreshold = minHeightByDiff
+		}
+
 		// Find pages with maximum height items (title pages)
 		pagesWithMaxHeight := d.findPagesWithMaxHeight(result.Pages, maxHeight)
 
-		// Handle title pages
+		// Handle title pages - use stricter threshold
 		min2ndLevelHeight := mostUsedHeight + (maxHeight-mostUsedHeight)/4
+		if min2ndLevelHeight < minHeightThreshold {
+			min2ndLevelHeight = minHeightThreshold
+		}
 		for _, page := range pagesWithMaxHeight {
 			for _, item := range page.Items {
 				lineItem, ok := item.(*models.LineItem)
@@ -41,7 +63,7 @@ func (d *DetectHeaders) Transform(result *models.ParseResult) *models.ParseResul
 				}
 
 				height := int(lineItem.Height)
-				if height > min2ndLevelHeight {
+				if height >= minHeightThreshold && height > min2ndLevelHeight {
 					if height == maxHeight {
 						lineItem.Type = models.BlockTypeH1
 					} else {
@@ -153,6 +175,15 @@ func (d *DetectHeaders) findPagesWithMaxHeight(pages []*models.Page, maxHeight i
 func (d *DetectHeaders) collectHeights(pages []*models.Page, mostUsedHeight int) []int {
 	heightSet := make(map[int]bool)
 
+	// Calculate minimum height threshold for header detection
+	// Require BOTH a minimum ratio AND a minimum absolute difference
+	minHeightByRatio := int(float64(mostUsedHeight) * MinHeightRatio)
+	minHeightByDiff := mostUsedHeight + MinHeightDifference
+	minHeight := minHeightByRatio
+	if minHeightByDiff > minHeight {
+		minHeight = minHeightByDiff
+	}
+
 	for _, page := range pages {
 		for _, item := range page.Items {
 			lineItem, ok := item.(*models.LineItem)
@@ -161,7 +192,7 @@ func (d *DetectHeaders) collectHeights(pages []*models.Page, mostUsedHeight int)
 			}
 
 			height := int(lineItem.Height)
-			if height > mostUsedHeight && !isListItem(lineItem.Text()) {
+			if height >= minHeight && !isListItem(lineItem.Text()) {
 				heightSet[height] = true
 			}
 		}
