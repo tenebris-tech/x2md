@@ -29,20 +29,30 @@ type Reference struct {
 	GenNum    int
 }
 
+// ObjectStreamRef represents an object stored in an object stream
+type ObjectStreamRef struct {
+	StreamObjNum int // Object number of the containing object stream
+	Index        int // Index within the object stream
+}
+
 // Parser parses PDF files
 type Parser struct {
-	data    []byte
-	objects map[int]*Object
-	xref    map[int]int64
-	trailer map[string]interface{}
+	data           []byte
+	objects        map[int]*Object
+	xref           map[int]int64
+	objStreamRefs  map[int]*ObjectStreamRef // Objects stored in object streams
+	trailer        map[string]interface{}
+	parsedObjStms  map[int]map[int]*Object   // Cached parsed object streams
 }
 
 // NewParser creates a new PDF parser
 func NewParser(data []byte) *Parser {
 	return &Parser{
-		data:    data,
-		objects: make(map[int]*Object),
-		xref:    make(map[int]int64),
+		data:          data,
+		objects:       make(map[int]*Object),
+		xref:          make(map[int]int64),
+		objStreamRefs: make(map[int]*ObjectStreamRef),
+		parsedObjStms: make(map[int]map[int]*Object),
 	}
 }
 
@@ -58,13 +68,16 @@ func (p *Parser) Parse() error {
 
 // parseXRef finds and parses the xref table
 func (p *Parser) parseXRef() error {
-	// Find startxref
+	// Find the LAST startxref in the file (PDF spec requires reading from end)
+	// PDFs can have multiple xref sections (linearized PDFs, incremental updates)
 	startxrefRe := regexp.MustCompile(`startxref\s+(\d+)`)
-	matches := startxrefRe.FindSubmatch(p.data)
-	if matches == nil {
+	allMatches := startxrefRe.FindAllSubmatch(p.data, -1)
+	if len(allMatches) == 0 {
 		return fmt.Errorf("startxref not found")
 	}
 
+	// Use the last startxref entry
+	matches := allMatches[len(allMatches)-1]
 	xrefOffset, _ := strconv.ParseInt(string(matches[1]), 10, 64)
 
 	// Check if it's an xref table or xref stream
@@ -128,7 +141,28 @@ func (p *Parser) parseXRefTable(pos int) error {
 	}
 
 	// Parse trailer dictionary
-	p.trailer = p.parseDictAt(pos)
+	currentTrailer := p.parseDictAt(pos)
+
+	// If this is the first trailer we've seen, save it
+	// Otherwise, just use it to get the Prev pointer
+	if p.trailer == nil {
+		p.trailer = currentTrailer
+	}
+
+	// Follow Prev if present (for incremental updates and linearized PDFs)
+	if prev, ok := currentTrailer["Prev"].(float64); ok {
+		prevPos := int(prev)
+		// Skip whitespace at prev position
+		for prevPos < len(p.data) && (p.data[prevPos] == ' ' || p.data[prevPos] == '\n' || p.data[prevPos] == '\r') {
+			prevPos++
+		}
+		// Parse the previous xref (could be table or stream)
+		if prevPos+4 <= len(p.data) && string(p.data[prevPos:prevPos+4]) == "xref" {
+			return p.parseXRefTable(prevPos)
+		} else {
+			return p.parseXRefStream(prevPos)
+		}
+	}
 
 	return nil
 }
@@ -145,17 +179,40 @@ func (p *Parser) parseXRefStream(pos int) error {
 		return fmt.Errorf("xref stream has no dictionary")
 	}
 
-	p.trailer = obj.Dict
+	// If this is the first trailer we've seen, save it
+	if p.trailer == nil {
+		p.trailer = obj.Dict
+	}
 
 	// Decode the xref stream
 	stream := obj.Stream
 	if filter, ok := obj.Dict["Filter"]; ok {
 		if filterName, ok := filter.(string); ok && filterName == "/FlateDecode" {
-			decoded, err := p.decodeFlateDecode(stream)
-			if err != nil {
-				return fmt.Errorf("decoding xref stream: %w", err)
+			// Check for predictor in DecodeParms
+			predictor := 1
+			columns := 0
+			if decodeParms, ok := obj.Dict["DecodeParms"].(map[string]interface{}); ok {
+				if pred, ok := decodeParms["Predictor"].(float64); ok {
+					predictor = int(pred)
+				}
+				if cols, ok := decodeParms["Columns"].(float64); ok {
+					columns = int(cols)
+				}
 			}
-			stream = decoded
+
+			if predictor > 1 && columns > 0 {
+				decoded, err := p.decodeFlateDecodeWithPredictor(stream, predictor, columns)
+				if err != nil {
+					return fmt.Errorf("decoding xref stream with predictor: %w", err)
+				}
+				stream = decoded
+			} else {
+				decoded, err := p.decodeFlateDecode(stream)
+				if err != nil {
+					return fmt.Errorf("decoding xref stream: %w", err)
+				}
+				stream = decoded
+			}
 		}
 	}
 
@@ -191,7 +248,11 @@ func (p *Parser) parseXRefStream(pos int) error {
 
 	// Parse entries
 	offset := 0
+	entriesAdded := 0
 	for i := 0; i < len(indexes); i += 2 {
+		if i+1 >= len(indexes) {
+			break // Malformed index array
+		}
 		startObj := indexes[i]
 		count := indexes[i+1]
 
@@ -219,9 +280,18 @@ func (p *Parser) parseXRefStream(pos int) error {
 			}
 
 			if objType == 1 {
-				// Regular object
+				// Regular object - store file offset
 				p.xref[objNum] = fields[1]
+				entriesAdded++
+			} else if objType == 2 {
+				// Object in object stream - store stream reference
+				p.objStreamRefs[objNum] = &ObjectStreamRef{
+					StreamObjNum: int(fields[1]),
+					Index:        int(fields[2]),
+				}
+				entriesAdded++
 			}
+			// Type 0 = free object, skip
 
 			offset += entrySize
 		}
@@ -229,7 +299,16 @@ func (p *Parser) parseXRefStream(pos int) error {
 
 	// Follow Prev if present
 	if prev, ok := obj.Dict["Prev"].(float64); ok {
-		return p.parseXRefStream(int(prev))
+		prevPos := int(prev)
+		// Skip whitespace at prev position
+		for prevPos < len(p.data) && (p.data[prevPos] == ' ' || p.data[prevPos] == '\n' || p.data[prevPos] == '\r') {
+			prevPos++
+		}
+		// Parse the previous xref (could be table or stream)
+		if prevPos+4 <= len(p.data) && string(p.data[prevPos:prevPos+4]) == "xref" {
+			return p.parseXRefTable(prevPos)
+		}
+		return p.parseXRefStream(prevPos)
 	}
 
 	return nil
@@ -255,18 +334,211 @@ func (p *Parser) GetObject(objNum int) (*Object, error) {
 		return obj, nil
 	}
 
-	offset, ok := p.xref[objNum]
-	if !ok {
-		return nil, fmt.Errorf("object %d not found in xref", objNum)
+	// Check if object is in regular xref
+	if offset, ok := p.xref[objNum]; ok {
+		obj, _, err := p.parseObjectAt(int(offset))
+		if err != nil {
+			return nil, err
+		}
+		p.objects[objNum] = obj
+		return obj, nil
 	}
 
-	obj, _, err := p.parseObjectAt(int(offset))
+	// Check if object is in an object stream
+	if ref, ok := p.objStreamRefs[objNum]; ok {
+		return p.getObjectFromStream(objNum, ref)
+	}
+
+	return nil, fmt.Errorf("object %d not found in xref", objNum)
+}
+
+// getObjectFromStream retrieves an object from an object stream
+func (p *Parser) getObjectFromStream(objNum int, ref *ObjectStreamRef) (*Object, error) {
+	// Check if we've already parsed this object stream
+	if streamObjs, ok := p.parsedObjStms[ref.StreamObjNum]; ok {
+		if obj, ok := streamObjs[objNum]; ok {
+			return obj, nil
+		}
+		return nil, fmt.Errorf("object %d not found in object stream %d", objNum, ref.StreamObjNum)
+	}
+
+	// Get the object stream
+	streamObj, err := p.GetObject(ref.StreamObjNum)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("getting object stream %d: %w", ref.StreamObjNum, err)
 	}
 
-	p.objects[objNum] = obj
-	return obj, nil
+	// Parse the object stream
+	if err := p.parseObjectStream(ref.StreamObjNum, streamObj); err != nil {
+		return nil, fmt.Errorf("parsing object stream %d: %w", ref.StreamObjNum, err)
+	}
+
+	// Now get the object from the parsed stream
+	if streamObjs, ok := p.parsedObjStms[ref.StreamObjNum]; ok {
+		if obj, ok := streamObjs[objNum]; ok {
+			return obj, nil
+		}
+	}
+
+	return nil, fmt.Errorf("object %d not found in object stream %d", objNum, ref.StreamObjNum)
+}
+
+// parseObjectStream parses an object stream and caches all objects within it
+func (p *Parser) parseObjectStream(streamObjNum int, streamObj *Object) error {
+	if streamObj.Dict == nil {
+		return fmt.Errorf("object stream has no dictionary")
+	}
+
+	// Get N (number of objects) and First (offset to first object)
+	n, ok := streamObj.Dict["N"].(float64)
+	if !ok {
+		return fmt.Errorf("object stream missing N")
+	}
+	first, ok := streamObj.Dict["First"].(float64)
+	if !ok {
+		return fmt.Errorf("object stream missing First")
+	}
+
+	// Decode the stream
+	stream := streamObj.Stream
+	if filter, ok := streamObj.Dict["Filter"]; ok {
+		if filterName, ok := filter.(string); ok && filterName == "/FlateDecode" {
+			// Check for predictor in DecodeParms
+			predictor := 1
+			columns := 0
+			if decodeParms, ok := streamObj.Dict["DecodeParms"].(map[string]interface{}); ok {
+				if pred, ok := decodeParms["Predictor"].(float64); ok {
+					predictor = int(pred)
+				}
+				if cols, ok := decodeParms["Columns"].(float64); ok {
+					columns = int(cols)
+				}
+			}
+
+			var decoded []byte
+			var err error
+			if predictor > 1 && columns > 0 {
+				decoded, err = p.decodeFlateDecodeWithPredictor(stream, predictor, columns)
+			} else {
+				decoded, err = p.decodeFlateDecode(stream)
+			}
+			if err != nil {
+				return fmt.Errorf("decoding object stream: %w", err)
+			}
+			stream = decoded
+		}
+	}
+
+	// Parse the index section (pairs of objNum, offset)
+	numObjs := int(n)
+	firstOffset := int(first)
+	indexData := string(stream[:firstOffset])
+
+	// Parse object numbers and offsets
+	type objEntry struct {
+		objNum int
+		offset int
+	}
+	entries := make([]objEntry, 0, numObjs)
+
+	pos := 0
+	for i := 0; i < numObjs; i++ {
+		// Skip whitespace
+		for pos < len(indexData) && (indexData[pos] == ' ' || indexData[pos] == '\n' || indexData[pos] == '\r' || indexData[pos] == '\t') {
+			pos++
+		}
+		// Read object number
+		start := pos
+		for pos < len(indexData) && indexData[pos] >= '0' && indexData[pos] <= '9' {
+			pos++
+		}
+		if start == pos {
+			break
+		}
+		objNum, _ := strconv.Atoi(indexData[start:pos])
+
+		// Skip whitespace
+		for pos < len(indexData) && (indexData[pos] == ' ' || indexData[pos] == '\n' || indexData[pos] == '\r' || indexData[pos] == '\t') {
+			pos++
+		}
+		// Read offset
+		start = pos
+		for pos < len(indexData) && indexData[pos] >= '0' && indexData[pos] <= '9' {
+			pos++
+		}
+		if start == pos {
+			break
+		}
+		offset, _ := strconv.Atoi(indexData[start:pos])
+
+		entries = append(entries, objEntry{objNum: objNum, offset: offset})
+	}
+
+	// Parse each object
+	objectData := stream[firstOffset:]
+	streamObjs := make(map[int]*Object)
+
+	for i, entry := range entries {
+		// Calculate end offset
+		endOffset := len(objectData)
+		if i+1 < len(entries) {
+			endOffset = entries[i+1].offset
+		}
+
+		// Parse the object value
+		objData := objectData[entry.offset:endOffset]
+		obj := &Object{}
+		p.parseObjectValue(objData, obj)
+
+		streamObjs[entry.objNum] = obj
+		p.objects[entry.objNum] = obj
+	}
+
+	p.parsedObjStms[streamObjNum] = streamObjs
+	return nil
+}
+
+// parseObjectValue parses an object value from bytes
+func (p *Parser) parseObjectValue(data []byte, obj *Object) {
+	pos := 0
+	// Skip whitespace
+	for pos < len(data) && (data[pos] == ' ' || data[pos] == '\n' || data[pos] == '\r' || data[pos] == '\t') {
+		pos++
+	}
+
+	if pos >= len(data) {
+		return
+	}
+
+	// Temporarily replace p.data to parse
+	origData := p.data
+	p.data = data
+
+	value, _ := p.parseValue(pos)
+
+	p.data = origData
+
+	// Set object based on value type
+	switch v := value.(type) {
+	case map[string]interface{}:
+		obj.Type = "dict"
+		obj.Dict = v
+	case []interface{}:
+		obj.Type = "array"
+		obj.Array = v
+	case float64:
+		obj.Type = "number"
+		obj.Number = v
+	case string:
+		obj.Type = "string"
+		obj.String = v
+	case bool:
+		obj.Type = "boolean"
+		obj.Boolean = v
+	case *Reference:
+		obj.Type = "ref"
+		obj.Ref = v
+	}
 }
 
 // parseObjectAt parses an object at the given offset
@@ -693,9 +965,129 @@ func (p *Parser) decodeFlateDecode(data []byte) ([]byte, error) {
 	return io.ReadAll(r)
 }
 
+// decodeFlateDecodeWithPredictor decodes FlateDecode with PNG predictor
+func (p *Parser) decodeFlateDecodeWithPredictor(data []byte, predictor, columns int) ([]byte, error) {
+	// First decompress
+	decompressed, err := p.decodeFlateDecode(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// If no predictor or predictor 1 (no prediction), return as-is
+	if predictor <= 1 {
+		return decompressed, nil
+	}
+
+	// PNG predictors (10-15)
+	if predictor >= 10 && predictor <= 15 {
+		return p.decodePNGPredictor(decompressed, columns)
+	}
+
+	// TIFF predictor (2) - not implemented for xref streams
+	return decompressed, nil
+}
+
+// decodePNGPredictor decodes PNG predictor filtered data
+func (p *Parser) decodePNGPredictor(data []byte, columns int) ([]byte, error) {
+	rowSize := columns + 1 // +1 for the filter byte
+	if len(data)%rowSize != 0 {
+		// Try without the extra filter byte per row
+		if len(data)%columns == 0 {
+			return data, nil
+		}
+		return nil, fmt.Errorf("invalid predictor data size: %d not divisible by row size %d", len(data), rowSize)
+	}
+
+	numRows := len(data) / rowSize
+	result := make([]byte, numRows*columns)
+	prevRow := make([]byte, columns)
+
+	for row := 0; row < numRows; row++ {
+		srcOffset := row * rowSize
+		dstOffset := row * columns
+		filterType := data[srcOffset]
+		rowData := data[srcOffset+1 : srcOffset+rowSize]
+
+		switch filterType {
+		case 0: // None
+			copy(result[dstOffset:], rowData)
+		case 1: // Sub
+			for i := 0; i < columns; i++ {
+				left := byte(0)
+				if i > 0 {
+					left = result[dstOffset+i-1]
+				}
+				result[dstOffset+i] = rowData[i] + left
+			}
+		case 2: // Up
+			for i := 0; i < columns; i++ {
+				result[dstOffset+i] = rowData[i] + prevRow[i]
+			}
+		case 3: // Average
+			for i := 0; i < columns; i++ {
+				left := byte(0)
+				if i > 0 {
+					left = result[dstOffset+i-1]
+				}
+				result[dstOffset+i] = rowData[i] + byte((int(left)+int(prevRow[i]))/2)
+			}
+		case 4: // Paeth
+			for i := 0; i < columns; i++ {
+				left := byte(0)
+				if i > 0 {
+					left = result[dstOffset+i-1]
+				}
+				up := prevRow[i]
+				upLeft := byte(0)
+				if i > 0 {
+					upLeft = prevRow[i-1]
+				}
+				result[dstOffset+i] = rowData[i] + paethPredictor(left, up, upLeft)
+			}
+		default:
+			// Unknown filter, just copy
+			copy(result[dstOffset:], rowData)
+		}
+
+		copy(prevRow, result[dstOffset:dstOffset+columns])
+	}
+
+	return result, nil
+}
+
+// paethPredictor implements the Paeth predictor algorithm
+func paethPredictor(a, b, c byte) byte {
+	p := int(a) + int(b) - int(c)
+	pa := abs(p - int(a))
+	pb := abs(p - int(b))
+	pc := abs(p - int(c))
+	if pa <= pb && pa <= pc {
+		return a
+	} else if pb <= pc {
+		return b
+	}
+	return c
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 // GetTrailer returns the trailer dictionary (for debugging)
 func (p *Parser) GetTrailer() map[string]interface{} {
 	return p.trailer
+}
+
+// IsEncrypted returns true if the PDF is encrypted
+func (p *Parser) IsEncrypted() bool {
+	if p.trailer == nil {
+		return false
+	}
+	_, hasEncrypt := p.trailer["Encrypt"]
+	return hasEncrypt
 }
 
 // GetPageCount returns the number of pages in the document

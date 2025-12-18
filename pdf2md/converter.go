@@ -269,6 +269,11 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 		return "", nil, fmt.Errorf("parsing PDF: %w", err)
 	}
 
+	// Check for encryption
+	if parser.IsEncrypted() {
+		return "", nil, fmt.Errorf("encrypted PDFs are not supported")
+	}
+
 	// Get page count
 	pageCount, err := parser.GetPageCount()
 	if err != nil {
