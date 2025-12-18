@@ -73,13 +73,11 @@ func (t *GatherBlocks) Transform(result *models.ParseResult) *models.ParseResult
 				continue
 			}
 
-			// Regular paragraph
-			if currentBlock == nil || currentBlock.Type != nil {
-				if currentBlock != nil && len(currentBlock.Items) > 0 {
-					newItems = append(newItems, currentBlock)
-				}
-				currentBlock = &models.LineItemBlock{}
+			// Regular paragraph - each paragraph is its own block
+			if currentBlock != nil && len(currentBlock.Items) > 0 {
+				newItems = append(newItems, currentBlock)
 			}
+			currentBlock = &models.LineItemBlock{}
 			currentBlock.AddItem(lineItem)
 		}
 

@@ -35,16 +35,17 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 			text = strings.TrimRight(text, "\n")
 
 			// Add appropriate newlines based on block type
+			// Markdown requires blank lines between paragraphs (\n\n)
 			switch textBlock.Category {
 			case "H1", "H2", "H3", "H4", "H5", "H6":
-				// Headings need blank line before and after
-				text = text + "\n"
+				// Headings need blank line after
+				text = text + "\n\n"
 			case "LIST":
-				// List items
+				// List items - single newline within lists
 				text = text + "\n"
 			default:
-				// Regular paragraphs
-				text = text + "\n"
+				// Regular paragraphs need blank line after
+				text = text + "\n\n"
 			}
 
 			newItems = append(newItems, text)
