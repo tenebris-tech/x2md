@@ -4,11 +4,13 @@ This file tracks pending improvements and known issues for x2md.
 
 ## Current Status
 
-### PDF Conversion - Stable
-All major features implemented and tested.
+### PDF Conversion - Production Ready
+All major features implemented and tested with 10+ real-world PDFs.
+Parser handles linearized PDFs, object streams, and encrypted file detection.
 
-### DOCX Conversion - Stable
+### DOCX Conversion - Production Ready
 Core functionality implemented with footnote/endnote support.
+Tested with 7 real-world DOCX files.
 
 ### Image Extraction - Implemented
 Both PDF and DOCX support image extraction:
@@ -130,17 +132,26 @@ When making changes, verify:
 
 ## Next Steps for Robustness
 
-### High Priority
+### Completed (2025-12-18)
 1. ~~**Header Detection Improvement**~~ - Fixed (commit `dba1229`)
-2. **Add Integration Tests** - Automated tests with real PDF/DOCX files
-3. **Error Recovery** - Better handling of malformed documents
+2. ~~**PDF Parser Robustness**~~ - Fixed (commit `2f1b606`):
+   - Use last startxref (linearized PDF support)
+   - PNG predictor support for xref streams
+   - Object stream support (Type 2 xref entries)
+   - Prev pointer following for incremental updates
+   - Encryption detection with clear error message
+3. ~~**Comprehensive Testing**~~ - Tested with 10 PDFs, 7 DOCX files
+
+### High Priority
+4. **Add Integration Tests** - Automated tests with real PDF/DOCX files
+5. **Error Recovery** - Better handling of malformed documents
 
 ### Medium Priority
-4. **PDF List Nesting** - Improve indentation detection
-5. **Table Column Alignment** - Better heuristics for column detection
-6. **DOCX Headers/Footers** - Optional extraction
+6. **PDF List Nesting** - Improve indentation detection
+7. **Table Column Alignment** - Better heuristics for column detection
+8. **DOCX Headers/Footers** - Optional extraction
 
 ### Low Priority
-7. **LZW Compression** - Implement for image extraction
-8. **OCR Integration** - Optional OCR for scanned PDFs
-9. **Performance Optimization** - Large document handling
+9. **LZW Compression** - Implement for image extraction
+10. **OCR Integration** - Optional OCR for scanned PDFs
+11. **Performance Optimization** - Large document handling

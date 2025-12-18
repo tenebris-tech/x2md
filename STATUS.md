@@ -1,8 +1,8 @@
 # x2md Project Status
 
-**Last Updated:** 2025-12-17
-**Branch:** `nested-lists`
-**Status:** Pre-release - Feature Complete
+**Last Updated:** 2025-12-18
+**Branch:** `alpha`
+**Status:** Pre-release - Production Ready
 
 ---
 
@@ -15,9 +15,9 @@ When starting a new session, tell Claude:
 
 Key context:
 - All 71 tests pass, build is clean
-- Main issue: header over-detection on simple PDFs (see Next Steps section)
-- The `nested-lists` branch has all current work
-- No DOCX test files exist in `private/` - only PDFs
+- PDF parser is production-ready (tested with 16+ real documents)
+- Branch `alpha` contains all current work
+- Test files: 10 PDFs and 7 DOCX in `private/`
 
 ---
 
@@ -114,9 +114,10 @@ None
 None
 
 ### Medium Priority
-2. **LZW Compression**: Not implemented for PDF image extraction. Gracefully
+1. **LZW Compression**: Not implemented for PDF image extraction. Gracefully
    skipped with warning.
-3. **DOCX Nested Tables**: May not render perfectly in all cases.
+2. **DOCX Nested Tables**: May not render perfectly in all cases.
+3. **Encrypted PDFs**: Not supported (graceful error message)
 
 ### Low Priority
 4. **Scanned PDFs**: OCR not supported
@@ -194,48 +195,43 @@ DOCX File (ZIP)
 
 ## Next Steps for 100% Robustness
 
-### Immediate (Before Release)
-1. [x] **Fix Header Over-detection**: ~~Improve algorithm for simple PDFs~~
-   - Fixed in commit `dba1229`: Added MinHeightRatio (1.5x) and MinHeightDifference (4pt) thresholds
+### Completed (2025-12-18)
+1. [x] **Fix Header Over-detection**: Added MinHeightRatio (1.5x) and MinHeightDifference (4pt) thresholds
+2. [x] **PDF Parser Robustness**: Major improvements for real-world PDFs:
+   - Use last startxref (linearized PDF support)
+   - PNG predictor support for xref streams (predictors 10-15)
+   - Object stream support (Type 2 xref entries)
+   - Prev pointer following for incremental updates
+   - Encryption detection with clear error message
+3. [x] **Comprehensive Testing**: Tested with 10 PDFs, 7 DOCX files (16+ documents)
 
-2. [ ] **Add Integration Tests**: Create automated tests with real files
-   - PDF table detection verification
-   - DOCX style detection verification
-   - Image extraction verification
-
-3. [ ] **Error Recovery**: Better handling of:
-   - Malformed PDFs (corrupted xref, missing objects)
-   - Malformed DOCX (missing XML files)
+### Before Release
+4. [ ] **Add Integration Tests**: Automated tests with real files
+5. [ ] **Error Recovery**: Better handling of malformed DOCX files
 
 ### Before v1.0
-4. [ ] **PDF List Nesting**: Better indentation detection from X position
-5. [ ] **Table Column Heuristics**: Improve column boundary detection
-6. [ ] **DOCX Headers/Footers**: Optional extraction with flag
-7. [ ] **Performance Testing**: Large document handling (1000+ pages)
+6. [ ] **PDF List Nesting**: Better indentation detection from X position
+7. [ ] **Table Column Heuristics**: Improve column boundary detection
+8. [ ] **DOCX Headers/Footers**: Optional extraction with flag
+9. [ ] **Performance Testing**: Large document handling (1000+ pages)
 
 ### Future
-8. [ ] **LZW Compression**: For PDF image extraction
-9. [ ] **OCR Integration**: Optional for scanned PDFs
-10. [ ] **RTF Support**: New format
+10. [ ] **LZW Compression**: For PDF image extraction
+11. [ ] **OCR Integration**: Optional for scanned PDFs
+12. [ ] **RTF Support**: New format
 
 ---
 
 ## Git History (Recent)
 
 ```
+2f1b606 Improve PDF parser robustness for commercial use
+e0a1ee2 Update docs: mark header over-detection as fixed
+dba1229 Fix header over-detection in simple PDFs
+f8b50a1 Add PROMPT.md for session resumption, update STATUS.md
 02f3bdd Add Claude resumption instructions to STATUS.md
 e186c13 Add STATUS.md, update documentation, enhance footnote detection
-9649d07 Add footnote/endnote support for DOCX
-0c02e99 Add nested list support for DOCX and PDF
-d6aa240 Add image extraction test plan
-c6e4912 Add image extraction for PDF and DOCX files
 ```
-
-## Open Pull Request
-
-**PR #1**: `nested-lists` → `alpha`
-- URL: https://github.com/tenebris-tech/x2md/pull/1
-- Status: Open (ready for review/merge)
 
 ---
 
