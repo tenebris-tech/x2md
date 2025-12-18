@@ -59,8 +59,6 @@ Both PDF and DOCX support image extraction:
 3. **Font Encodings**: Some non-standard fonts may have character issues
 4. **Math Formulas**: Converted as plain text
 5. **LZW Compression**: Not implemented (gracefully skipped)
-6. **Header Over-detection**: Simple PDFs with limited font variation may have
-   all lines detected as headers (see basic-text.pdf)
 
 ### PDF Test Cases
 
@@ -133,7 +131,7 @@ When making changes, verify:
 ## Next Steps for Robustness
 
 ### High Priority
-1. **Header Detection Improvement** - Fix over-detection on simple PDFs
+1. ~~**Header Detection Improvement**~~ - Fixed (commit `dba1229`)
 2. **Add Integration Tests** - Automated tests with real PDF/DOCX files
 3. **Error Recovery** - Better handling of malformed documents
 

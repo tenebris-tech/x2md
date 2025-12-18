@@ -111,10 +111,7 @@ x2md is a pure Go utility for converting PDF and DOCX files to Markdown. No CGO 
 None
 
 ### High Priority
-1. **Header Over-detection (PDF)**: Simple PDFs with limited font variation
-   (e.g., `basic-text.pdf`) may have all lines incorrectly detected as headers.
-   The algorithm assumes font size variation indicates headings, which fails for
-   documents with uniform formatting.
+None
 
 ### Medium Priority
 2. **LZW Compression**: Not implemented for PDF image extraction. Gracefully
@@ -198,15 +195,8 @@ DOCX File (ZIP)
 ## Next Steps for 100% Robustness
 
 ### Immediate (Before Release)
-1. [ ] **Fix Header Over-detection**: Improve algorithm for simple PDFs
-   - **Problem**: `basic-text.pdf` outputs all lines as `## ` (H2)
-   - **Root cause**: `pdf2md/transform/detect_headers.go` uses font height
-     comparison to detect headings. When a PDF has minimal font variation,
-     the algorithm incorrectly promotes most lines.
-   - **Suggested fix**: Add minimum height difference threshold, or detect
-     when document lacks clear heading hierarchy and disable detection.
-   - **Test command**: `./x2md private/basic-text.pdf && head -30 private/basic-text.md`
-   - **Expected**: Normal paragraphs, not all H2 headers
+1. [x] **Fix Header Over-detection**: ~~Improve algorithm for simple PDFs~~
+   - Fixed in commit `dba1229`: Added MinHeightRatio (1.5x) and MinHeightDifference (4pt) thresholds
 
 2. [ ] **Add Integration Tests**: Create automated tests with real files
    - PDF table detection verification
