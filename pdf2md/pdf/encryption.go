@@ -7,7 +7,19 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	"crypto/rc4"
+	"crypto/sha256"
+	"crypto/sha512"
 	"fmt"
+)
+
+// CryptMethod specifies the encryption algorithm
+type CryptMethod int
+
+const (
+	CryptNone CryptMethod = iota
+	CryptRC4
+	CryptAESV2 // AES-128
+	CryptAESV3 // AES-256
 )
 
 // EncryptionHandler handles PDF decryption for permission-restricted PDFs
@@ -23,6 +35,10 @@ type EncryptionHandler struct {
 	UE         []byte // User encryption key (AES-256, R=6)
 	Perms      []byte // Permissions (AES-256, R=6)
 	EncryptMeta bool  // Whether metadata is encrypted
+
+	// Crypt filter settings (V4+)
+	StmF CryptMethod // Stream filter method
+	StrF CryptMethod // String filter method
 
 	// Document ID from trailer
 	ID []byte
@@ -47,6 +63,8 @@ func NewEncryptionHandler(encryptDict map[string]interface{}, trailerID []byte) 
 	h := &EncryptionHandler{
 		ID:          trailerID,
 		EncryptMeta: true, // Default
+		StmF:        CryptRC4,
+		StrF:        CryptRC4,
 	}
 
 	// Get version
@@ -68,6 +86,8 @@ func NewEncryptionHandler(encryptDict map[string]interface{}, trailerID []byte) 
 		h.KeyLength = int(length)
 	} else if h.V == 1 {
 		h.KeyLength = 40
+	} else if h.V == 5 {
+		h.KeyLength = 256
 	} else {
 		h.KeyLength = 128
 	}
@@ -103,7 +123,88 @@ func NewEncryptionHandler(encryptDict map[string]interface{}, trailerID []byte) 
 		h.EncryptMeta = em
 	}
 
+	// Parse crypt filters for V4+
+	if h.V >= 4 {
+		h.parseCryptFilters(encryptDict)
+	}
+
+	// For V5, always use AES-256
+	if h.V == 5 {
+		h.StmF = CryptAESV3
+		h.StrF = CryptAESV3
+	}
+
 	return h, nil
+}
+
+// parseCryptFilters parses the CF dictionary to determine encryption methods
+func (h *EncryptionHandler) parseCryptFilters(encryptDict map[string]interface{}) {
+	// Get stream and string filter names
+	stmfName := "StdCF"
+	strfName := "StdCF"
+
+	if stmf, ok := encryptDict["StmF"].(string); ok {
+		stmfName = trimSlash(stmf)
+	}
+	if strf, ok := encryptDict["StrF"].(string); ok {
+		strfName = trimSlash(strf)
+	}
+
+	// Identity filter means no encryption
+	if stmfName == "Identity" {
+		h.StmF = CryptNone
+	}
+	if strfName == "Identity" {
+		h.StrF = CryptNone
+	}
+
+	// Parse CF dictionary
+	cf, ok := encryptDict["CF"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	// Get the StdCF (or named filter) settings
+	if stmfName != "Identity" {
+		if stdcf, ok := cf[stmfName].(map[string]interface{}); ok {
+			h.StmF = parseCFM(stdcf)
+		}
+	}
+	if strfName != "Identity" {
+		if stdcf, ok := cf[strfName].(map[string]interface{}); ok {
+			h.StrF = parseCFM(stdcf)
+		}
+	}
+}
+
+// parseCFM parses the CFM (crypt filter method) from a filter dictionary
+func parseCFM(filterDict map[string]interface{}) CryptMethod {
+	cfm, ok := filterDict["CFM"].(string)
+	if !ok {
+		return CryptRC4
+	}
+
+	cfm = trimSlash(cfm)
+	switch cfm {
+	case "V2":
+		return CryptRC4
+	case "AESV2":
+		return CryptAESV2
+	case "AESV3":
+		return CryptAESV3
+	case "None":
+		return CryptNone
+	default:
+		return CryptRC4
+	}
+}
+
+// trimSlash removes leading slash from PDF name
+func trimSlash(s string) string {
+	if len(s) > 0 && s[0] == '/' {
+		return s[1:]
+	}
+	return s
 }
 
 // TryEmptyPassword attempts to authenticate with an empty password
@@ -141,13 +242,13 @@ func (h *EncryptionHandler) authenticateUserR2(password string) bool {
 	key := h.computeKeyR2(password)
 
 	// For R=2, encrypt the padding with the key and compare to U
-	cipher, err := rc4.NewCipher(key)
+	c, err := rc4.NewCipher(key)
 	if err != nil {
 		return false
 	}
 
 	encrypted := make([]byte, 32)
-	cipher.XORKeyStream(encrypted, passwordPadding)
+	c.XORKeyStream(encrypted, passwordPadding)
 
 	if bytes.Equal(encrypted, h.U) {
 		h.key = key
@@ -177,11 +278,11 @@ func (h *EncryptionHandler) authenticateUserR34(password string) bool {
 			iterKey[j] = key[j] ^ byte(i)
 		}
 
-		cipher, err := rc4.NewCipher(iterKey)
+		c, err := rc4.NewCipher(iterKey)
 		if err != nil {
 			return false
 		}
-		cipher.XORKeyStream(encrypted, encrypted)
+		c.XORKeyStream(encrypted, encrypted)
 	}
 
 	// Compare first 16 bytes of U with encrypted result
@@ -216,7 +317,7 @@ func (h *EncryptionHandler) authenticateUserR56(password string) bool {
 	// For R=6: More complex iterative hash
 	var computedHash []byte
 	if h.R == 5 {
-		computedHash = h.sha256(pwBytes, validationSalt, nil)
+		computedHash = h.computeSHA256(pwBytes, validationSalt, nil)
 	} else {
 		computedHash = h.computeHashR6(pwBytes, validationSalt, nil)
 	}
@@ -228,17 +329,17 @@ func (h *EncryptionHandler) authenticateUserR56(password string) bool {
 	// Derive the file encryption key
 	var keyHash []byte
 	if h.R == 5 {
-		keyHash = h.sha256(pwBytes, keySalt, nil)
+		keyHash = h.computeSHA256(pwBytes, keySalt, nil)
 	} else {
 		keyHash = h.computeHashR6(pwBytes, keySalt, nil)
 	}
 
 	// Decrypt UE to get the file encryption key
-	if len(h.UE) < 32 {
+	if len(h.UE) < 32 || len(keyHash) < 32 {
 		return false
 	}
 
-	block, err := aes.NewCipher(keyHash)
+	block, err := aes.NewCipher(keyHash[:32])
 	if err != nil {
 		return false
 	}
@@ -250,7 +351,6 @@ func (h *EncryptionHandler) authenticateUserR56(password string) bool {
 	h.key = make([]byte, 32)
 	mode.CryptBlocks(h.key, h.UE[:32])
 
-	h.authenticated = true
 	return true
 }
 
@@ -320,18 +420,83 @@ func (h *EncryptionHandler) padPassword(password string) []byte {
 	return result
 }
 
-// sha256 computes SHA-256 hash (simplified - would need crypto/sha256 import)
-func (h *EncryptionHandler) sha256(data, salt, extra []byte) []byte {
-	// For now, return nil - R5/R6 is less common
-	// Would need proper implementation with crypto/sha256
-	return nil
+// computeSHA256 computes SHA-256 hash for R5 authentication
+func (h *EncryptionHandler) computeSHA256(password, salt, userKey []byte) []byte {
+	hash := sha256.New()
+	hash.Write(password)
+	hash.Write(salt)
+	if userKey != nil {
+		hash.Write(userKey)
+	}
+	return hash.Sum(nil)
 }
 
-// computeHashR6 computes the R6 iterative hash
-func (h *EncryptionHandler) computeHashR6(password, salt, extra []byte) []byte {
-	// R6 uses a complex iterative hash algorithm
-	// For now, return nil - R6 is less common
-	return nil
+// computeHashR6 computes the R6 iterative hash (256-round SHA-256/384/512)
+func (h *EncryptionHandler) computeHashR6(password, salt, userKey []byte) []byte {
+	// Initial hash
+	input := make([]byte, 0, len(password)+len(salt)+len(userKey))
+	input = append(input, password...)
+	input = append(input, salt...)
+	if userKey != nil {
+		input = append(input, userKey...)
+	}
+
+	hash := sha256.Sum256(input)
+	key := hash[:]
+
+	// 64-round iteration
+	data := make([]byte, 0, 64*(len(password)+len(key)+len(userKey)))
+
+	for round := 0; round < 64 || round < int(data[len(data)-1])+32; round++ {
+		// Build K1: password + K + userKey, repeated 64 times
+		k1 := make([]byte, 0, 64*(len(password)+len(key)+len(userKey)))
+		for i := 0; i < 64; i++ {
+			k1 = append(k1, password...)
+			k1 = append(k1, key...)
+			if userKey != nil {
+				k1 = append(k1, userKey...)
+			}
+		}
+
+		// AES-CBC encrypt K1 with key=K[0:16], iv=K[16:32]
+		block, err := aes.NewCipher(key[:16])
+		if err != nil {
+			return nil
+		}
+
+		// Pad K1 to block size
+		padLen := 16 - (len(k1) % 16)
+		if padLen < 16 {
+			k1 = append(k1, bytes.Repeat([]byte{byte(padLen)}, padLen)...)
+		}
+
+		mode := cipher.NewCBCEncrypter(block, key[16:32])
+		encrypted := make([]byte, len(k1))
+		mode.CryptBlocks(encrypted, k1)
+		data = encrypted
+
+		// Sum of first 16 bytes mod 3 determines hash
+		sum := 0
+		for i := 0; i < 16; i++ {
+			sum += int(data[i])
+		}
+
+		var newHash []byte
+		switch sum % 3 {
+		case 0:
+			h := sha256.Sum256(data)
+			newHash = h[:]
+		case 1:
+			h := sha512.Sum384(data)
+			newHash = h[:]
+		case 2:
+			h := sha512.Sum512(data)
+			newHash = h[:]
+		}
+		key = newHash[:32]
+	}
+
+	return key
 }
 
 // DecryptStream decrypts a stream using the computed key
@@ -340,22 +505,37 @@ func (h *EncryptionHandler) DecryptStream(data []byte, objNum, genNum int) ([]by
 		return nil, fmt.Errorf("not authenticated")
 	}
 
-	// Compute object-specific key
-	objKey := h.computeObjectKey(objNum, genNum, false)
-
-	// Decrypt based on version
-	if h.V < 4 {
-		// RC4
-		return h.decryptRC4(data, objKey)
-	}
-
-	// AES (V=4 or V=5)
-	return h.decryptAES(data, objKey)
+	return h.decrypt(data, objNum, genNum, h.StmF)
 }
 
 // DecryptString decrypts a string using the computed key
 func (h *EncryptionHandler) DecryptString(data []byte, objNum, genNum int) ([]byte, error) {
-	return h.DecryptStream(data, objNum, genNum)
+	if !h.authenticated {
+		return nil, fmt.Errorf("not authenticated")
+	}
+
+	return h.decrypt(data, objNum, genNum, h.StrF)
+}
+
+// decrypt performs decryption using the specified method
+func (h *EncryptionHandler) decrypt(data []byte, objNum, genNum int, method CryptMethod) ([]byte, error) {
+	if method == CryptNone {
+		return data, nil
+	}
+
+	switch method {
+	case CryptRC4:
+		objKey := h.computeObjectKey(objNum, genNum, false)
+		return h.decryptRC4(data, objKey)
+	case CryptAESV2:
+		objKey := h.computeObjectKey(objNum, genNum, true)
+		return h.decryptAES(data, objKey)
+	case CryptAESV3:
+		// AES-256 uses the file key directly (no per-object key derivation)
+		return h.decryptAES(data, h.key)
+	default:
+		return nil, fmt.Errorf("unsupported crypt method: %d", method)
+	}
 }
 
 // computeObjectKey computes the key for a specific object
@@ -388,13 +568,13 @@ func (h *EncryptionHandler) computeObjectKey(objNum, genNum int, forAES bool) []
 
 // decryptRC4 decrypts data using RC4
 func (h *EncryptionHandler) decryptRC4(data, key []byte) ([]byte, error) {
-	cipher, err := rc4.NewCipher(key)
+	c, err := rc4.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
 
 	result := make([]byte, len(data))
-	cipher.XORKeyStream(result, data)
+	c.XORKeyStream(result, data)
 	return result, nil
 }
 
@@ -408,11 +588,30 @@ func (h *EncryptionHandler) decryptAES(data, key []byte) ([]byte, error) {
 	iv := data[:16]
 	ciphertext := data[16:]
 
+	if len(ciphertext) == 0 {
+		return []byte{}, nil
+	}
+
 	if len(ciphertext)%16 != 0 {
 		return nil, fmt.Errorf("ciphertext not multiple of block size")
 	}
 
-	block, err := aes.NewCipher(key)
+	// Ensure key is correct size for AES
+	var block cipher.Block
+	var err error
+
+	switch len(key) {
+	case 16:
+		block, err = aes.NewCipher(key)
+	case 32:
+		block, err = aes.NewCipher(key)
+	default:
+		// Truncate or pad to 16 bytes for AES-128
+		aesKey := make([]byte, 16)
+		copy(aesKey, key)
+		block, err = aes.NewCipher(aesKey)
+	}
+
 	if err != nil {
 		return nil, err
 	}

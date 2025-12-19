@@ -480,8 +480,17 @@ func (p *Parser) parseObjectStream(streamObjNum int, streamObj *Object) error {
 		return fmt.Errorf("object stream missing First")
 	}
 
-	// Decode the stream
+	// Decode the stream - must decrypt first if encryption is active
 	stream := streamObj.Stream
+
+	// Decrypt if encryption is active
+	if p.encryption != nil && p.encryption.IsAuthenticated() {
+		decrypted, err := p.encryption.DecryptStream(stream, streamObj.ObjNum, streamObj.GenNum)
+		if err == nil {
+			stream = decrypted
+		}
+	}
+
 	if filter, ok := streamObj.Dict["Filter"]; ok {
 		if filterName, ok := filter.(string); ok && filterName == "/FlateDecode" {
 			// Check for predictor in DecodeParms
