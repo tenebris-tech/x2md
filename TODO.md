@@ -56,22 +56,55 @@ Both PDF and DOCX support image extraction:
 
 ### Known Limitations
 
-1. **Scanned PDFs**: Only text-based PDFs supported
+1. **Scanned PDFs**: Only text-based PDFs supported (OCR not available)
 2. **Complex Layouts**: Overlapping text regions may not convert perfectly
 3. **Font Encodings**: Some non-standard fonts may have character issues
 4. **Math Formulas**: Converted as plain text
 5. **LZW Compression**: Not implemented (gracefully skipped)
+6. **Encrypted PDFs**: Not supported (graceful error message)
 
-### PDF Test Cases
+### Issues Discovered During Testing (2025-12-19)
 
-Test with `CPP_ND_V3.0E.pdf` (245 pages):
+1. **Simple Table Detection** (basic-text.pdf)
+   - Tables without explicit borders not detected
+   - Headers and rows combined into single lines
+   - Affects: Simple PDFs with space-aligned columns
 
-| Page | Feature | Expected Result |
-|------|---------|-----------------|
-| 1 | Date | "06-December-2023" (no extra space) |
-| 2 | Text | "academia." not a header |
-| 3 | Reference table | [CC1], [CC2], etc. with \| separators |
-| 3-5 | Revision History | Single merged table, 13 rows, one header |
+2. **Simple List Detection** (basic-text.pdf)
+   - Unordered lists without explicit bullets not detected
+   - Items like "Item 1", "Item 2" lack `-` prefix in output
+
+3. **Bilingual PDF Layout** (SOR-2018-64.pdf)
+   - English/French side-by-side text interleaved in output
+   - Some hyphenated words broken across lines
+   - This is inherent to complex multi-column layouts
+
+### Test Results (2025-12-19)
+
+**PDF Files Tested: 10**
+| File | Status | Notes |
+|------|--------|-------|
+| basic-text.pdf | ✓ | Headers, lists work; simple tables need improvement |
+| CPP_ND_V3.0E.pdf | ✓ | 245 pages, tables, footnotes all work |
+| footnotes.pdf | ✓ | Footnotes detected correctly |
+| 2021C25A.pdf | ✓ | Converted successfully |
+| Common Sense Guide...pdf | ✓ | Complex layout, TOC as table |
+| omNovos_Nessus...pdf | ✓ | Security report format |
+| SOR-2018-64.pdf | ✓ | Bilingual layout challenges |
+| The-Law-of-Expert...pdf | ✓ | Scanned PDF - images only (expected) |
+| AFCEA IT Security...pdf | ✓ | Large file (152MB) - handles well |
+| itsg33-ann3a-eng.pdf | ✗ | Encrypted - correctly rejected |
+
+**DOCX Files Tested: 7**
+| File | Status | Notes |
+|------|--------|-------|
+| 20080401 Pager Return.docx | ✓ | Simple letter format |
+| 20110912 Manulife...docx | ✓ | Letter with numbered list |
+| 20240626 Leasecake DR...docx | ✓ | Table format |
+| 20240821 SOC Gap Letter.docx | ✓ | Letter with formatting |
+| 20250930 Leasecake Policies...docx | ✓ | Multi-level headers, lists |
+| 4_CSSP Project...docx | ✓ | Long report with footnotes |
+| Cylance Install...docx | ✓ | Instructions with hyperlinks |
 
 ---
 
@@ -132,7 +165,7 @@ When making changes, verify:
 
 ## Next Steps for Robustness
 
-### Completed (2025-12-18)
+### Completed (2025-12-18/19)
 1. ~~**Header Detection Improvement**~~ - Fixed (commit `dba1229`)
 2. ~~**PDF Parser Robustness**~~ - Fixed (commit `2f1b606`):
    - Use last startxref (linearized PDF support)
@@ -141,6 +174,13 @@ When making changes, verify:
    - Prev pointer following for incremental updates
    - Encryption detection with clear error message
 3. ~~**Comprehensive Testing**~~ - Tested with 10 PDFs, 7 DOCX files
+4. ~~**DOCX Paragraph Separation**~~ - Fixed (commit `0b7f0c8`):
+   - Each paragraph now its own block in gather_blocks.go
+   - Proper `\n\n` after paragraphs in to_markdown.go
+5. ~~**DOCX XML Parsing Data Corruption**~~ - Fixed (commit `e469989`):
+   - Critical bug: xml.Decoder.Token() CharData must be copied
+   - Was causing footnotes to contain corrupted/random text
+   - Fixed by copying CharData, Comment, ProcInst, Directive tokens
 
 ### High Priority
 4. **Add Integration Tests** - Automated tests with real PDF/DOCX files
