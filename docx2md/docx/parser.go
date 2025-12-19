@@ -242,6 +242,8 @@ func decodeWithNamespaceStripping(decoder *xml.Decoder, v interface{}) error {
 		}
 
 		// Transform token to strip namespace prefixes from local names
+		// CRITICAL: CharData and other byte-based tokens must be copied since
+		// xml.Decoder reuses its internal buffer between Token() calls
 		switch t := tok.(type) {
 		case xml.StartElement:
 			t.Name.Local = stripNamespacePrefix(t.Name.Local)
@@ -255,6 +257,15 @@ func decodeWithNamespaceStripping(decoder *xml.Decoder, v interface{}) error {
 			t.Name.Local = stripNamespacePrefix(t.Name.Local)
 			t.Name.Space = ""
 			tok = t
+		case xml.CharData:
+			tok = xml.CharData(append([]byte(nil), t...))
+		case xml.Comment:
+			tok = xml.Comment(append([]byte(nil), t...))
+		case xml.ProcInst:
+			t.Inst = append([]byte(nil), t.Inst...)
+			tok = t
+		case xml.Directive:
+			tok = xml.Directive(append([]byte(nil), t...))
 		}
 		tokens = append(tokens, tok)
 	}

@@ -866,10 +866,22 @@ func (e *Extractor) extractParagraphsText(paras []Paragraph) string {
 // extractParagraphText extracts plain text from a single paragraph
 func (e *Extractor) extractParagraphText(para Paragraph) string {
 	var text strings.Builder
+
+	// Extract text from direct runs
 	for _, run := range para.Runs {
 		for _, t := range run.Text {
 			text.WriteString(t.Value)
 		}
 	}
+
+	// Extract text from hyperlinks (hyperlinks contain their own runs)
+	for _, hl := range para.Hyperlinks {
+		for _, run := range hl.Runs {
+			for _, t := range run.Text {
+				text.WriteString(t.Value)
+			}
+		}
+	}
+
 	return strings.TrimSpace(text.String())
 }
