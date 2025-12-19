@@ -21,6 +21,8 @@ type Object struct {
 	String  string
 	Boolean bool
 	Ref     *Reference
+	ObjNum  int // Object number (for decryption)
+	GenNum  int // Generation number (for decryption)
 }
 
 // Reference represents a PDF object reference
@@ -43,6 +45,7 @@ type Parser struct {
 	objStreamRefs  map[int]*ObjectStreamRef // Objects stored in object streams
 	trailer        map[string]interface{}
 	parsedObjStms  map[int]map[int]*Object   // Cached parsed object streams
+	encryption     *EncryptionHandler        // Encryption handler (nil if not encrypted)
 }
 
 // NewParser creates a new PDF parser
@@ -63,7 +66,85 @@ func (p *Parser) Parse() error {
 		return fmt.Errorf("parsing xref: %w", err)
 	}
 
+	// Initialize encryption handler if document is encrypted
+	if err := p.initEncryption(); err != nil {
+		return fmt.Errorf("initializing encryption: %w", err)
+	}
+
 	return nil
+}
+
+// initEncryption initializes encryption handling if the PDF is encrypted
+func (p *Parser) initEncryption() error {
+	if p.trailer == nil {
+		return nil
+	}
+
+	encryptRef, hasEncrypt := p.trailer["Encrypt"]
+	if !hasEncrypt {
+		return nil // Not encrypted
+	}
+
+	// Get the Encrypt dictionary
+	var encryptDict map[string]interface{}
+
+	switch e := encryptRef.(type) {
+	case *Reference:
+		obj, err := p.getObjectDirect(e.ObjectNum)
+		if err != nil {
+			return fmt.Errorf("getting Encrypt object: %w", err)
+		}
+		encryptDict = obj.Dict
+	case map[string]interface{}:
+		encryptDict = e
+	default:
+		return fmt.Errorf("invalid Encrypt entry type")
+	}
+
+	if encryptDict == nil {
+		return fmt.Errorf("empty Encrypt dictionary")
+	}
+
+	// Get document ID from trailer
+	var docID []byte
+	if idArray, ok := p.trailer["ID"].([]interface{}); ok && len(idArray) > 0 {
+		if idStr, ok := idArray[0].(string); ok {
+			docID = []byte(idStr)
+		}
+	}
+
+	// Create encryption handler
+	handler, err := NewEncryptionHandler(encryptDict, docID)
+	if err != nil {
+		return fmt.Errorf("creating encryption handler: %w", err)
+	}
+
+	// Try authenticating with empty password
+	if !handler.TryEmptyPassword() {
+		// PDF requires a password - we can't handle this
+		return nil // Leave encryption as nil, IsEncrypted will return true
+	}
+
+	// Successfully authenticated - store handler for decryption
+	p.encryption = handler
+	return nil
+}
+
+// getObjectDirect retrieves an object without decryption (for bootstrapping)
+func (p *Parser) getObjectDirect(objNum int) (*Object, error) {
+	if obj, ok := p.objects[objNum]; ok {
+		return obj, nil
+	}
+
+	if offset, ok := p.xref[objNum]; ok {
+		obj, _, err := p.parseObjectAt(int(offset))
+		if err != nil {
+			return nil, err
+		}
+		return obj, nil
+	}
+
+	return nil, fmt.Errorf("object %d not found", objNum)
 }
 
 // parseXRef finds and parses the xref table
@@ -550,7 +631,7 @@ func (p *Parser) parseObjectAt(pos int) (*Object, int, error) {
 
 	// Parse object header: objnum gennum obj
 	objNumStr, pos := p.readToken(pos)
-	_, pos = p.readToken(pos) // gennum
+	genNumStr, pos := p.readToken(pos)
 	objKeyword, pos := p.readToken(pos)
 
 	if objKeyword != "obj" {
@@ -558,9 +639,13 @@ func (p *Parser) parseObjectAt(pos int) (*Object, int, error) {
 	}
 
 	objNum, _ := strconv.Atoi(objNumStr)
+	genNum, _ := strconv.Atoi(genNumStr)
 
 	// Parse object content
-	obj := &Object{}
+	obj := &Object{
+		ObjNum: objNum,
+		GenNum: genNum,
+	}
 	pos = p.skipWhitespace(pos)
 
 	// Determine object type and parse
@@ -1081,13 +1166,27 @@ func (p *Parser) GetTrailer() map[string]interface{} {
 	return p.trailer
 }
 
-// IsEncrypted returns true if the PDF is encrypted
+// IsEncrypted returns true if the PDF requires a password to read.
+// PDFs with only permission restrictions (owner password, no user password)
+// return false because we can decrypt them with an empty password.
 func (p *Parser) IsEncrypted() bool {
 	if p.trailer == nil {
 		return false
 	}
+
 	_, hasEncrypt := p.trailer["Encrypt"]
-	return hasEncrypt
+	if !hasEncrypt {
+		return false // No encryption at all
+	}
+
+	// If we have an encryption handler, we successfully authenticated
+	// (with empty password), so the PDF is readable
+	if p.encryption != nil && p.encryption.IsAuthenticated() {
+		return false
+	}
+
+	// Has Encrypt but couldn't authenticate - truly encrypted
+	return true
 }
 
 // GetPageCount returns the number of pages in the document
@@ -1203,6 +1302,20 @@ func (p *Parser) DecodeStream(obj *Object) ([]byte, error) {
 
 	data := obj.Stream
 
+	// Decrypt if encryption is active (skip Crypt filter handling)
+	if p.encryption != nil && p.encryption.IsAuthenticated() {
+		// Check if stream uses identity crypt filter
+		if !p.streamUsesIdentityCrypt(obj) {
+			decrypted, err := p.encryption.DecryptStream(data, obj.ObjNum, obj.GenNum)
+			if err != nil {
+				// If decryption fails, try with original data
+				// (might be unencrypted metadata or XRef stream)
+			} else {
+				data = decrypted
+			}
+		}
+	}
+
 	filter := obj.Dict["Filter"]
 	if filter == nil {
 		return data, nil
@@ -1232,6 +1345,9 @@ func (p *Parser) DecodeStream(obj *Object) ([]byte, error) {
 			data, err = p.decodeASCIIHex(data)
 		case "/LZWDecode":
 			data, err = p.decodeLZW(data)
+		case "/Crypt":
+			// Already handled above or identity filter
+			continue
 		}
 		if err != nil {
 			return nil, fmt.Errorf("decoding %s: %w", f, err)
@@ -1239,6 +1355,42 @@ func (p *Parser) DecodeStream(obj *Object) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// streamUsesIdentityCrypt checks if a stream uses the Identity crypt filter
+func (p *Parser) streamUsesIdentityCrypt(obj *Object) bool {
+	if obj.Dict == nil {
+		return false
+	}
+
+	// Check DecodeParms for Crypt filter with Identity
+	decodeParms := obj.Dict["DecodeParms"]
+	if decodeParms == nil {
+		return false
+	}
+
+	var parms map[string]interface{}
+	switch dp := decodeParms.(type) {
+	case map[string]interface{}:
+		parms = dp
+	case []interface{}:
+		// Array of decode params - check each
+		for _, item := range dp {
+			if m, ok := item.(map[string]interface{}); ok {
+				if name, ok := m["Name"].(string); ok && name == "/Identity" {
+					return true
+				}
+			}
+		}
+		return false
+	default:
+		return false
+	}
+
+	if name, ok := parms["Name"].(string); ok {
+		return name == "/Identity"
+	}
+	return false
 }
 
 // decodeASCII85 decodes ASCII85 encoded data
