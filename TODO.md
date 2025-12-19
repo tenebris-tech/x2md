@@ -183,7 +183,11 @@ When making changes, verify:
    - Fixed by copying CharData, Comment, ProcInst, Directive tokens
 
 ### High Priority
-4. **Add Integration Tests** - Automated tests with real PDF/DOCX files
+4. ~~**Add Integration Tests**~~ - Completed (commit `7641335`):
+   - Tests converter API against files in private/ directory
+   - Regression tests for paragraph separation and footnote corruption fixes
+   - Tests for encrypted PDF rejection, table/header detection, image extraction
+   - Large file performance test (skipped in -short mode)
 5. **Error Recovery** - Better handling of malformed documents
 
 ### Medium Priority
