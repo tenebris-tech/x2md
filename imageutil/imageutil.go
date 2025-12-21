@@ -49,11 +49,12 @@ func (w *ImageWriter) WriteImage(img *models.ImageItem) (string, error) {
 	filename := img.OutputPath
 	if filename == "" {
 		filename = w.GenerateFilename(img.Format)
-		img.OutputPath = filepath.Join(w.RelativeDir, filename)
 	} else {
 		// Extract just the filename from OutputPath if it includes directory
 		filename = filepath.Base(img.OutputPath)
 	}
+	// Always update OutputPath to include the relative directory
+	img.OutputPath = filepath.Join(w.RelativeDir, filename)
 
 	// Write file
 	fullPath := filepath.Join(w.OutputDir, filename)

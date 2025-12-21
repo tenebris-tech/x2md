@@ -26,6 +26,7 @@ func main() {
 	stripBlankPages := flag.Bool("strip-blank-pages", false, "Strip blank pages [PDF only]")
 	noLists := flag.Bool("no-lists", false, "Don't detect lists [PDF only]")
 	noHeadings := flag.Bool("no-headings", false, "Don't detect headings [PDF only]")
+	noScanMode := flag.Bool("no-scan-mode", false, "Disable automatic scanned page detection [PDF only]")
 
 	// Common options
 	noFormatting := flag.Bool("no-formatting", false, "Don't preserve bold/italic formatting")
@@ -77,6 +78,9 @@ func main() {
 	}
 	if *noImages {
 		pdfOpts = append(pdfOpts, pdf2md.WithExtractImages(false))
+	}
+	if *noScanMode {
+		pdfOpts = append(pdfOpts, pdf2md.WithScanMode(false))
 	}
 
 	// Build DOCX options

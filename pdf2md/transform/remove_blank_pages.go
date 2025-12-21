@@ -27,6 +27,11 @@ func (r *RemoveBlankPages) Transform(result *models.ParseResult) *models.ParseRe
 }
 
 func (r *RemoveBlankPages) isBlankPage(page *models.Page) bool {
+	// Scanned pages have no text items but are not blank
+	if page.IsScanned {
+		return false
+	}
+
 	if len(page.Items) == 0 {
 		return true
 	}

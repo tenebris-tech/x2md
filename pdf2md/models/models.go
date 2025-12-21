@@ -20,10 +20,11 @@ type TextItem struct {
 
 // Page represents a page in the document
 type Page struct {
-	Index  int
-	Items  []interface{} // Can be TextItem, LineItem, or LineItemBlock
-	Width  float64       // Page width in points
-	Height float64       // Page height in points
+	Index     int
+	Items     []interface{} // Can be TextItem, LineItem, or LineItemBlock
+	Width     float64       // Page width in points
+	Height    float64       // Page height in points
+	IsScanned bool          // Whether this page is a scanned image
 }
 
 // Word represents a word with optional formatting

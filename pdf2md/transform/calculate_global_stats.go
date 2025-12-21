@@ -113,8 +113,11 @@ func (c *CalculateGlobalStats) Transform(result *models.ParseResult) *models.Par
 			}
 		}
 		newPages[i] = &models.Page{
-			Index: page.Index,
-			Items: newItems,
+			Index:     page.Index,
+			Items:     newItems,
+			Width:     page.Width,
+			Height:    page.Height,
+			IsScanned: page.IsScanned,
 		}
 	}
 

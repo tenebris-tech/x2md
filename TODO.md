@@ -216,5 +216,11 @@ When making changes, verify:
    - PDF uses MSB bit order with literal width of 8
    - Added decodeLZWWithPredictor() for PNG predictor support
    - Unit tests for round-trip compression/decompression
-10. **OCR Integration** - Optional OCR for scanned PDFs
-11. **Performance Optimization** - Large document handling
+10. ~~**Scan Mode**~~ - Completed:
+    - Enabled by default; use `-no-scan-mode` to disable
+    - Auto-detects scanned pages (<100 chars text + large images)
+    - Extracts page images as `page_001.png`, `page_002.png`, etc.
+    - Images saved to `{filename}_images/` directory
+    - Mixed documents supported (some scanned, some text)
+11. **OCR Integration** - Optional OCR for scanned PDFs
+12. **Performance Optimization** - Large document handling

@@ -56,6 +56,11 @@ type Options struct {
 	// ExtractImages enables image extraction
 	ExtractImages bool
 
+	// ScanMode enables automatic detection of scanned pages.
+	// When enabled, pages with little/no text but large images are treated as scans
+	// and the page image is extracted instead of attempting text extraction.
+	ScanMode bool
+
 	// PageSeparator is the separator between pages
 	PageSeparator string
 
@@ -88,6 +93,7 @@ func DefaultOptions() *Options {
 		DetectHeadings:     true,
 		PreserveFormatting: true,
 		ExtractImages:      true,
+		ScanMode:           true, // Auto-detect scanned pages by default
 		PageSeparator:      "\n",
 	}
 }
@@ -161,6 +167,15 @@ func WithOnPageSkipped(callback func(pageNum int, reason string)) Option {
 func WithExtractImages(extract bool) Option {
 	return func(o *Options) {
 		o.ExtractImages = extract
+	}
+}
+
+// WithScanMode enables automatic detection of scanned pages.
+// When enabled, pages with little/no text but containing images are treated as scans.
+// The page image is extracted as page_NNN.png instead of attempting text extraction.
+func WithScanMode(enabled bool) Option {
+	return func(o *Options) {
+		o.ScanMode = enabled
 	}
 }
 
@@ -292,6 +307,7 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 	extractor := pdf.NewTextExtractor(parser)
 	var pages []*models.Page
 	var allImages []*models.ImageItem
+	var scannedPageImages []*models.ImageItem // Page images for scanned pages
 	imageCounter := 0
 
 	for i := 0; i < pageCount; i++ {
@@ -300,6 +316,58 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 			// Skip pages that fail to extract, notify via callback
 			if c.options.OnPageSkipped != nil {
 				c.options.OnPageSkipped(i+1, err.Error())
+			}
+			continue
+		}
+
+		// Get page dimensions
+		pageWidth, pageHeight, _ := extractor.GetPageDimensions(i)
+
+		// Get page images
+		var pageImages []*pdf.ImageData
+		var imageNames []string
+		if c.options.ExtractImages || c.options.ScanMode {
+			pageImages, imageNames, _ = parser.GetAllPageImages(i)
+		}
+
+		// Check if this page is a scan (ScanMode enabled)
+		if c.options.ScanMode && c.isScannedPage(textItems, pageImages, pageWidth, pageHeight) {
+			// This is a scanned page - extract the largest image as the page image
+			if len(pageImages) > 0 {
+				// Find the largest image (likely the full page scan)
+				largestImg := c.findLargestImage(pageImages)
+				if largestImg != nil {
+					pageImageID := fmt.Sprintf("page_%03d", i+1)
+					ext := ".png"
+					if largestImg.Format == "jpeg" || largestImg.Format == "jpg" {
+						ext = ".jpg"
+					}
+					img := &models.ImageItem{
+						ID:         pageImageID,
+						SourcePath: pageImageID,
+						OutputPath: pageImageID + ext, // Use page_XXX naming for file
+						Format:     largestImg.Format,
+						Data:       largestImg.Data,
+						AltText:    fmt.Sprintf("Page %d", i+1),
+						PageIndex:  i,
+						Width:      largestImg.Width,
+						Height:     largestImg.Height,
+					}
+					scannedPageImages = append(scannedPageImages, img)
+				}
+			}
+
+			// Add empty page to maintain page structure
+			pages = append(pages, &models.Page{
+				Index:    i,
+				Items:    nil, // No text items for scanned pages
+				Width:    pageWidth,
+				Height:   pageHeight,
+				IsScanned: true,
+			})
+
+			if c.options.OnPageParsed != nil {
+				c.options.OnPageParsed(i+1, pageCount)
 			}
 			continue
 		}
@@ -317,34 +385,28 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 			})
 		}
 
-		// Extract images from this page if enabled
-		if c.options.ExtractImages {
-			pageImages, imageNames, err := parser.GetAllPageImages(i)
-			if err == nil && len(pageImages) > 0 {
-				for j, imgData := range pageImages {
-					imageCounter++
-					imgName := ""
-					if j < len(imageNames) {
-						imgName = imageNames[j]
-					}
-
-					img := &models.ImageItem{
-						ID:        fmt.Sprintf("image_%03d", imageCounter),
-						SourcePath: imgName,
-						Format:    imgData.Format,
-						Data:      imgData.Data,
-						AltText:   imgName,
-						PageIndex: i,
-						Width:     imgData.Width,
-						Height:    imgData.Height,
-					}
-					allImages = append(allImages, img)
+		// Extract images from this page if enabled (non-scanned pages)
+		if c.options.ExtractImages && len(pageImages) > 0 {
+			for j, imgData := range pageImages {
+				imageCounter++
+				imgName := ""
+				if j < len(imageNames) {
+					imgName = imageNames[j]
 				}
+
+				img := &models.ImageItem{
+					ID:         fmt.Sprintf("image_%03d", imageCounter),
+					SourcePath: imgName,
+					Format:     imgData.Format,
+					Data:       imgData.Data,
+					AltText:    imgName,
+					PageIndex:  i,
+					Width:      imgData.Width,
+					Height:     imgData.Height,
+				}
+				allImages = append(allImages, img)
 			}
 		}
-
-		// Get page dimensions
-		pageWidth, pageHeight, _ := extractor.GetPageDimensions(i)
 
 		pages = append(pages, &models.Page{
 			Index:  i,
@@ -379,22 +441,61 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 
 	// Combine page outputs
 	var output strings.Builder
-	for i, page := range result.Pages {
-		for _, item := range page.Items {
-			if text, ok := item.(string); ok {
-				output.WriteString(text)
+
+	// Handle scanned vs non-scanned pages
+	if len(scannedPageImages) > 0 && len(scannedPageImages) == pageCount {
+		// All pages are scanned - just output image references
+		for i, img := range scannedPageImages {
+			output.WriteString(fmt.Sprintf("![%s]\n\n", img.ID))
+			if i < len(scannedPageImages)-1 {
+				output.WriteString(c.options.PageSeparator)
 			}
 		}
-		if i < len(result.Pages)-1 {
-			output.WriteString(c.options.PageSeparator)
+	} else if len(scannedPageImages) > 0 {
+		// Mixed document - some scanned, some text
+		// Output scanned page images in order, interleaved with text content
+		scannedPageIdx := 0
+		for pageIdx := 0; pageIdx < pageCount; pageIdx++ {
+			// Check if this page was scanned
+			if scannedPageIdx < len(scannedPageImages) &&
+				scannedPageImages[scannedPageIdx].PageIndex == pageIdx {
+				// This is a scanned page
+				img := scannedPageImages[scannedPageIdx]
+				output.WriteString(fmt.Sprintf("![%s]\n\n", img.ID))
+				scannedPageIdx++
+			}
+			// Text content from pipeline will be at the end
+		}
+		// Add pipeline text output (for non-scanned pages)
+		for _, page := range result.Pages {
+			for _, item := range page.Items {
+				if text, ok := item.(string); ok {
+					output.WriteString(text)
+				}
+			}
+		}
+	} else {
+		// No scanned pages - normal text output
+		for i, page := range result.Pages {
+			for _, item := range page.Items {
+				if text, ok := item.(string); ok {
+					output.WriteString(text)
+				}
+			}
+			if i < len(result.Pages)-1 {
+				output.WriteString(c.options.PageSeparator)
+			}
 		}
 	}
 
-	// Add image references at the end if there are images
-	// (since we don't have precise positioning information)
-	if len(allImages) > 0 {
+	// Combine all images (scanned pages + regular images)
+	allImages = append(scannedPageImages, allImages...)
+
+	// Add image references at the end if there are regular images
+	// (scanned page images are already referenced inline)
+	if len(allImages) > len(scannedPageImages) {
 		output.WriteString("\n\n## Images\n\n")
-		for _, img := range allImages {
+		for _, img := range allImages[len(scannedPageImages):] {
 			// Write placeholder that will be replaced with actual path
 			output.WriteString(fmt.Sprintf("![%s]\n\n", img.ID))
 		}
@@ -405,4 +506,61 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 	}
 
 	return output.String(), allImages, nil
+}
+
+// isScannedPage determines if a page is likely a scanned image.
+// A page is considered scanned if it has very little text and contains images.
+func (c *Converter) isScannedPage(textItems []pdf.TextItem, images []*pdf.ImageData, pageWidth, pageHeight float64) bool {
+	// No images = not a scan
+	if len(images) == 0 {
+		return false
+	}
+
+	// Calculate total text length
+	totalTextLen := 0
+	for _, item := range textItems {
+		totalTextLen += len(strings.TrimSpace(item.Text))
+	}
+
+	// If very little text (less than 100 characters), likely a scan
+	if totalTextLen < 100 {
+		// Check if any image is large enough to be a page scan
+		// (at least 50% of page dimensions)
+		for _, img := range images {
+			imgWidth := float64(img.Width)
+			imgHeight := float64(img.Height)
+
+			// Image should cover significant portion of page
+			if imgWidth > pageWidth*0.5 || imgHeight > pageHeight*0.5 {
+				return true
+			}
+
+			// Or if it's a reasonably sized image (at least 500x500)
+			if imgWidth >= 500 && imgHeight >= 500 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// findLargestImage returns the largest image by pixel count
+func (c *Converter) findLargestImage(images []*pdf.ImageData) *pdf.ImageData {
+	if len(images) == 0 {
+		return nil
+	}
+
+	largest := images[0]
+	largestPixels := largest.Width * largest.Height
+
+	for _, img := range images[1:] {
+		pixels := img.Width * img.Height
+		if pixels > largestPixels {
+			largest = img
+			largestPixels = pixels
+		}
+	}
+
+	return largest
 }

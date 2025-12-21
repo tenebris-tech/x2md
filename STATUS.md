@@ -87,6 +87,7 @@ x2md is a pure Go utility for converting PDF and DOCX files to Markdown. No CGO 
 | Header/footer removal | DONE | Optional |
 | TOC detection | DONE | |
 | Blank page removal | DONE | Optional |
+| Scan mode | DONE | Default on; extracts scanned pages as images |
 
 ### DOCX Conversion (`docx2md/`)
 
@@ -118,7 +119,7 @@ None
 2. **Encrypted PDFs**: Not supported (graceful error message)
 
 ### Low Priority
-3. **Scanned PDFs**: OCR not supported
+3. **Scanned PDFs**: OCR not supported (but scan mode extracts pages as images)
 4. **Math formulas**: Converted as plain text
 
 ---
@@ -248,6 +249,7 @@ e186c13 Add STATUS.md, update documentation, enhance footnote detection
 ./x2md -strip-blank-pages input.pdf
 ./x2md -no-lists input.pdf
 ./x2md -no-headings input.pdf
+./x2md -no-scan-mode input.pdf      # Disable scanned page detection
 
 # Common options
 ./x2md -no-formatting input.pdf     # No bold/italic
