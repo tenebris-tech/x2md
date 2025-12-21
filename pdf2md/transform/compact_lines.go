@@ -396,6 +396,12 @@ func (c *CompactLines) detectTableRegions(items []*models.TextItem, mostUsedDist
 		}
 	}
 
+	// Method 3: Look for space-aligned tables (consistent column positions across rows)
+	if len(regions) == 0 {
+		alignedRegions := c.detectAlignedTables(items, mostUsedDistance, footerThreshold)
+		regions = append(regions, alignedRegions...)
+	}
+
 	return regions
 }
 
@@ -522,6 +528,172 @@ func (c *CompactLines) detectReferenceTable(items []*models.TextItem, mostUsedDi
 		maxY:    maxY,
 		columns: columns,
 	}
+}
+
+// detectAlignedTables detects tables by looking for consistent column alignment across rows.
+//
+// This method catches simple tables without explicit headers or reference IDs by:
+//  1. Grouping items into rows by Y position
+//  2. Finding rows with 2+ distinct column positions (well-spaced items)
+//  3. Looking for sequences of 3+ rows that share consistent column positions
+//  4. Verifying significant column width (not just two items on a line)
+//
+// Returns table regions for any detected aligned tables.
+func (c *CompactLines) detectAlignedTables(items []*models.TextItem, mostUsedDistance int, footerThreshold float64) []*tableRegion {
+	// Group items by Y position into rows
+	yThreshold := float64(mostUsedDistance) / 2.0
+	if yThreshold < 5 {
+		yThreshold = 5
+	}
+
+	type rowInfo struct {
+		y       float64
+		items   []*models.TextItem
+		columns []float64 // detected column X positions
+	}
+
+	yGroups := make(map[int][]*models.TextItem)
+	for _, item := range items {
+		if strings.TrimSpace(item.Text) == "" {
+			continue
+		}
+		if item.Y >= footerThreshold {
+			continue // Skip footer area
+		}
+		yBucket := int(item.Y / yThreshold)
+		yGroups[yBucket] = append(yGroups[yBucket], item)
+	}
+
+	// Convert to sorted rows
+	var rows []rowInfo
+	var buckets []int
+	for bucket := range yGroups {
+		buckets = append(buckets, bucket)
+	}
+	sort.Ints(buckets)
+
+	for _, bucket := range buckets {
+		rowItems := yGroups[bucket]
+		if len(rowItems) < 2 {
+			continue // Need at least 2 items to be a table row
+		}
+
+		// Sort by X
+		sort.Slice(rowItems, func(i, j int) bool {
+			return rowItems[i].X < rowItems[j].X
+		})
+
+		// Detect column positions for this row
+		var columns []float64
+		lastX := float64(-1000)
+		for _, item := range rowItems {
+			if item.X-lastX >= minColumnSpacing {
+				columns = append(columns, item.X)
+				lastX = item.X
+			}
+		}
+
+		if len(columns) >= 2 {
+			rows = append(rows, rowInfo{
+				y:       float64(bucket) * yThreshold,
+				items:   rowItems,
+				columns: columns,
+			})
+		}
+	}
+
+	if len(rows) < 3 {
+		return nil // Need at least 3 rows to be a table
+	}
+
+	// Look for sequences of rows with matching column counts and aligned positions
+	var regions []*tableRegion
+	startIdx := 0
+
+	for startIdx < len(rows) {
+		// Find a run of consecutive rows with consistent columns
+		endIdx := startIdx + 1
+		baseColumns := rows[startIdx].columns
+
+		for endIdx < len(rows) {
+			nextColumns := rows[endIdx].columns
+			if !c.columnsMatch(baseColumns, nextColumns) {
+				break
+			}
+			endIdx++
+		}
+
+		runLength := endIdx - startIdx
+		if runLength >= 3 {
+			// Found a valid table sequence
+			// Merge column positions from all rows for best accuracy
+			var allColumns [][]float64
+			for i := startIdx; i < endIdx; i++ {
+				allColumns = append(allColumns, rows[i].columns)
+			}
+			mergedColumns := c.mergeColumnPositions(allColumns)
+
+			// Calculate Y range
+			minY := rows[startIdx].y
+			maxY := rows[endIdx-1].y
+			for i := startIdx; i < endIdx; i++ {
+				for _, item := range rows[i].items {
+					if item.Y > maxY {
+						maxY = item.Y
+					}
+				}
+			}
+
+			regions = append(regions, &tableRegion{
+				minY:      minY,
+				maxY:      maxY,
+				columns:   mergedColumns,
+				hasHeader: true, // Treat first row as header
+			})
+		}
+
+		startIdx = endIdx
+	}
+
+	return regions
+}
+
+// columnsMatch checks if two sets of column positions are similar
+func (c *CompactLines) columnsMatch(cols1, cols2 []float64) bool {
+	if len(cols1) != len(cols2) {
+		return false
+	}
+
+	// Check if each column position is within tolerance
+	for i := range cols1 {
+		if math.Abs(cols1[i]-cols2[i]) > columnAlignmentTolerance*2 {
+			return false
+		}
+	}
+
+	return true
+}
+
+// mergeColumnPositions averages column positions from multiple column sets
+func (c *CompactLines) mergeColumnPositions(columnSets [][]float64) []float64 {
+	if len(columnSets) == 0 {
+		return nil
+	}
+
+	numCols := len(columnSets[0])
+	result := make([]float64, numCols)
+
+	for i := 0; i < numCols; i++ {
+		sum := 0.0
+		for _, cols := range columnSets {
+			if i < len(cols) {
+				sum += cols[i]
+			}
+		}
+		result[i] = sum / float64(len(columnSets))
+	}
+
+	return result
 }
 
 // detectColumnsFromItems finds column X positions from a set of items
@@ -1413,7 +1585,18 @@ func isListItemCharacter(s string) bool {
 		return false
 	}
 	c := r[0]
-	return c == '-' || c == '•' || c == '–'
+	// Common bullet characters used in PDFs
+	switch c {
+	case '-', '•', '–', '—', // hyphen, bullet, en-dash, em-dash
+		'◦', '○', '●', // circles
+		'▪', '■', '□', // squares
+		'▸', '►', '▹', '▻', // triangles/arrows
+		'★', '☆', // stars
+		'·', '∙', // middle dots
+		'⁃': // hyphen bullet
+		return true
+	}
+	return false
 }
 
 func isNumber(s string) bool {

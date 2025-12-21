@@ -144,7 +144,7 @@ Both PDF and DOCX support image extraction:
 1. **Nested Tables**: May not render perfectly
 2. **Advanced Formatting**: Text boxes, shapes ignored
 3. **Track Changes**: Comments and revisions not included
-4. **Headers/Footers**: Document headers/footers not extracted
+4. **Headers/Footers**: Optional extraction with `WithExtractHeadersFooters(true)`
 
 ---
 
@@ -188,12 +188,27 @@ When making changes, verify:
    - Regression tests for paragraph separation and footnote corruption fixes
    - Tests for encrypted PDF rejection, table/header detection, image extraction
    - Large file performance test (skipped in -short mode)
-5. **Error Recovery** - Better handling of malformed documents
+5. ~~**Error Recovery**~~ - Completed:
+   - Max depth limit (100) for page tree traversal
+   - Nil check for trailer in GetPageCount
+   - Bounds validation in decodePNGPredictor
+   - Defer/recover in parseContentStream for panic recovery
+   - OnPageSkipped callback for failed page extraction
 
 ### Medium Priority
-6. **PDF List Nesting** - Improve indentation detection
-7. **Table Column Alignment** - Better heuristics for column detection
-8. **DOCX Headers/Footers** - Optional extraction
+6. ~~**PDF List Nesting**~~ - Completed:
+   - Added support for letter-based lists (a., b., A., B.)
+   - Added support for roman numeral lists (i., ii., I., II.)
+   - New `isOrderedListItem()` helper function
+7. ~~**Table Column Alignment**~~ - Completed:
+   - New `detectAlignedTables()` method for space-aligned tables
+   - Detects tables by consistent column positions across 3+ rows
+   - `columnsMatch()` and `mergeColumnPositions()` helpers
+8. ~~**DOCX Headers/Footers**~~ - Completed:
+   - Added Header and Footer types to elements.go
+   - GetHeaders() and GetFooters() methods in parser
+   - ExtractHeaders() and ExtractFooters() methods in extractor
+   - WithExtractHeadersFooters option for converter
 
 ### Low Priority
 9. **LZW Compression** - Implement for image extraction

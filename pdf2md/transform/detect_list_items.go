@@ -14,7 +14,32 @@ func NewDetectListItems() *DetectListItems {
 	return &DetectListItems{}
 }
 
-var numberedListPattern = regexp.MustCompile(`^[\s]*[\d]+[.][\s].*$`)
+// List detection patterns
+var (
+	// Numbered lists: "1.", "2.", "10." etc.
+	numberedListPattern = regexp.MustCompile(`^[\s]*\d+[.)]\s+.*$`)
+
+	// Lowercase letter lists: "a.", "b.", "a)", "b)" etc.
+	lowerLetterPattern = regexp.MustCompile(`^[\s]*[a-z][.)]\s+.*$`)
+
+	// Uppercase letter lists: "A.", "B.", "A)", "B)" etc.
+	upperLetterPattern = regexp.MustCompile(`^[\s]*[A-Z][.)]\s+.*$`)
+
+	// Lowercase roman numerals: "i.", "ii.", "iii.", "iv." etc.
+	lowerRomanPattern = regexp.MustCompile(`^[\s]*(?:x{0,3}(?:ix|iv|v?i{0,3}))[.)]\s+.*$`)
+
+	// Uppercase roman numerals: "I.", "II.", "III.", "IV." etc.
+	upperRomanPattern = regexp.MustCompile(`^[\s]*(?:X{0,3}(?:IX|IV|V?I{0,3}))[.)]\s+.*$`)
+)
+
+// isOrderedListItem checks if text matches any ordered list pattern
+func isOrderedListItem(text string) bool {
+	return numberedListPattern.MatchString(text) ||
+		lowerLetterPattern.MatchString(text) ||
+		upperLetterPattern.MatchString(text) ||
+		lowerRomanPattern.MatchString(text) ||
+		upperRomanPattern.MatchString(text)
+}
 
 // indentUnit is the approximate points per indent level in PDFs
 const indentUnit = 20.0
@@ -88,7 +113,7 @@ func (d *DetectListItems) Transform(result *models.ParseResult) *models.ParseRes
 					}
 					newItems = append(newItems, newItem)
 				}
-			} else if numberedListPattern.MatchString(text) {
+			} else if isOrderedListItem(text) {
 				lineItem.Type = models.BlockTypeList
 				lineItem.ListLevel = calculateListLevel(lineItem.X, minListX)
 				lineItem.Annotation = models.DetectedAnnotation
@@ -114,7 +139,7 @@ func findMinListX(items []interface{}) float64 {
 		}
 		firstWord := lineItem.Words[0].String
 		text := lineItem.Text()
-		if isListItemCharacter(firstWord) || numberedListPattern.MatchString(text) {
+		if isListItemCharacter(firstWord) || isOrderedListItem(text) {
 			if minX < 0 || lineItem.X < minX {
 				minX = lineItem.X
 			}

@@ -885,3 +885,76 @@ func (e *Extractor) extractParagraphText(para Paragraph) string {
 
 	return strings.TrimSpace(text.String())
 }
+
+// HeaderFooterContent represents extracted header or footer content
+type HeaderFooterContent struct {
+	ID      string // e.g., "header1", "footer2"
+	Content string // Plain text content
+}
+
+// ExtractHeaders extracts text from all document headers
+func (e *Extractor) ExtractHeaders() ([]HeaderFooterContent, error) {
+	headers, err := e.parser.GetHeaders()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []HeaderFooterContent
+	for id, header := range headers {
+		content := e.extractHeaderFooterContent(header.Paragraphs, header.Tables)
+		if content != "" {
+			result = append(result, HeaderFooterContent{ID: id, Content: content})
+		}
+	}
+
+	return result, nil
+}
+
+// ExtractFooters extracts text from all document footers
+func (e *Extractor) ExtractFooters() ([]HeaderFooterContent, error) {
+	footers, err := e.parser.GetFooters()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []HeaderFooterContent
+	for id, footer := range footers {
+		content := e.extractHeaderFooterContent(footer.Paragraphs, footer.Tables)
+		if content != "" {
+			result = append(result, HeaderFooterContent{ID: id, Content: content})
+		}
+	}
+
+	return result, nil
+}
+
+// extractHeaderFooterContent extracts text from paragraphs and tables
+func (e *Extractor) extractHeaderFooterContent(paras []Paragraph, tables []Table) string {
+	var parts []string
+
+	// Extract text from paragraphs
+	for _, para := range paras {
+		text := e.extractParagraphText(para)
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+
+	// Extract text from tables
+	for _, table := range tables {
+		for _, row := range table.Rows {
+			var rowParts []string
+			for _, cell := range row.Cells {
+				cellText := e.extractParagraphsText(cell.Paragraphs)
+				if cellText != "" {
+					rowParts = append(rowParts, cellText)
+				}
+			}
+			if len(rowParts) > 0 {
+				parts = append(parts, strings.Join(rowParts, " | "))
+			}
+		}
+	}
+
+	return strings.Join(parts, " ")
+}

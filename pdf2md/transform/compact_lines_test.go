@@ -438,3 +438,161 @@ func TestCombineText(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectAlignedTables(t *testing.T) {
+	c := NewCompactLines()
+
+	tests := []struct {
+		name           string
+		items          []*models.TextItem
+		wantRegions    int
+		wantMinColumns int
+	}{
+		{
+			name: "simple 3-row 2-column table",
+			items: []*models.TextItem{
+				// Row 1 (header)
+				{X: 50, Y: 100, Width: 40, Text: "Name"},
+				{X: 150, Y: 100, Width: 40, Text: "Value"},
+				// Row 2
+				{X: 50, Y: 120, Width: 40, Text: "Alpha"},
+				{X: 150, Y: 120, Width: 40, Text: "100"},
+				// Row 3
+				{X: 50, Y: 140, Width: 40, Text: "Beta"},
+				{X: 150, Y: 140, Width: 40, Text: "200"},
+			},
+			wantRegions:    1,
+			wantMinColumns: 2,
+		},
+		{
+			name: "4-row 3-column table",
+			items: []*models.TextItem{
+				// Row 1
+				{X: 50, Y: 100, Width: 40, Text: "ID"},
+				{X: 150, Y: 100, Width: 40, Text: "Name"},
+				{X: 250, Y: 100, Width: 40, Text: "Status"},
+				// Row 2
+				{X: 50, Y: 120, Width: 40, Text: "1"},
+				{X: 150, Y: 120, Width: 40, Text: "Item A"},
+				{X: 250, Y: 120, Width: 40, Text: "Active"},
+				// Row 3
+				{X: 50, Y: 140, Width: 40, Text: "2"},
+				{X: 150, Y: 140, Width: 40, Text: "Item B"},
+				{X: 250, Y: 140, Width: 40, Text: "Pending"},
+				// Row 4
+				{X: 50, Y: 160, Width: 40, Text: "3"},
+				{X: 150, Y: 160, Width: 40, Text: "Item C"},
+				{X: 250, Y: 160, Width: 40, Text: "Done"},
+			},
+			wantRegions:    1,
+			wantMinColumns: 3,
+		},
+		{
+			name: "not a table - only 2 rows",
+			items: []*models.TextItem{
+				{X: 50, Y: 100, Width: 40, Text: "Name"},
+				{X: 150, Y: 100, Width: 40, Text: "Value"},
+				{X: 50, Y: 120, Width: 40, Text: "Alpha"},
+				{X: 150, Y: 120, Width: 40, Text: "100"},
+			},
+			wantRegions:    0,
+			wantMinColumns: 0,
+		},
+		{
+			name: "not a table - misaligned columns",
+			items: []*models.TextItem{
+				{X: 50, Y: 100, Width: 40, Text: "Name"},
+				{X: 150, Y: 100, Width: 40, Text: "Value"},
+				{X: 110, Y: 120, Width: 40, Text: "Alpha"}, // 60 pixels off, outside tolerance
+				{X: 210, Y: 120, Width: 40, Text: "100"},
+				{X: 50, Y: 140, Width: 40, Text: "Beta"},
+				{X: 150, Y: 140, Width: 40, Text: "200"},
+			},
+			wantRegions:    0,
+			wantMinColumns: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			regions := c.detectAlignedTables(tt.items, 12, 700.0)
+
+			if len(regions) != tt.wantRegions {
+				t.Errorf("detectAlignedTables() got %d regions, want %d", len(regions), tt.wantRegions)
+			}
+
+			if tt.wantMinColumns > 0 && len(regions) > 0 {
+				if len(regions[0].columns) < tt.wantMinColumns {
+					t.Errorf("detectAlignedTables() got %d columns, want at least %d",
+						len(regions[0].columns), tt.wantMinColumns)
+				}
+			}
+		})
+	}
+}
+
+func TestColumnsMatch(t *testing.T) {
+	c := NewCompactLines()
+
+	tests := []struct {
+		name  string
+		cols1 []float64
+		cols2 []float64
+		want  bool
+	}{
+		{
+			name:  "exact match",
+			cols1: []float64{50.0, 150.0, 250.0},
+			cols2: []float64{50.0, 150.0, 250.0},
+			want:  true,
+		},
+		{
+			name:  "within tolerance",
+			cols1: []float64{50.0, 150.0, 250.0},
+			cols2: []float64{55.0, 155.0, 255.0},
+			want:  true,
+		},
+		{
+			name:  "outside tolerance",
+			cols1: []float64{50.0, 150.0, 250.0},
+			cols2: []float64{50.0, 200.0, 250.0}, // 50 pixels off
+			want:  false,
+		},
+		{
+			name:  "different column count",
+			cols1: []float64{50.0, 150.0},
+			cols2: []float64{50.0, 150.0, 250.0},
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := c.columnsMatch(tt.cols1, tt.cols2)
+			if got != tt.want {
+				t.Errorf("columnsMatch() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeColumnPositions(t *testing.T) {
+	c := NewCompactLines()
+
+	columnSets := [][]float64{
+		{50.0, 150.0, 250.0},
+		{52.0, 148.0, 252.0},
+		{48.0, 152.0, 248.0},
+	}
+
+	result := c.mergeColumnPositions(columnSets)
+
+	if len(result) != 3 {
+		t.Errorf("mergeColumnPositions() got %d columns, want 3", len(result))
+	}
+
+	// Average of 50, 52, 48 = 50
+	if result[0] != 50.0 {
+		t.Errorf("mergeColumnPositions()[0] = %f, want 50.0", result[0])
+	}
+}

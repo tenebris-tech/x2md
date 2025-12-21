@@ -23,6 +23,8 @@ type Parser struct {
 	relationships *Relationships
 	footnotes     *Footnotes
 	endnotes      *Endnotes
+	headers       map[string]*Header
+	footers       map[string]*Footer
 }
 
 // NewParser creates a parser from byte data
@@ -158,6 +160,58 @@ func (p *Parser) GetEndnotes() (*Endnotes, error) {
 
 	p.endnotes = endnotes
 	return endnotes, nil
+}
+
+// GetHeaders returns all parsed headers
+// Headers are stored in word/header1.xml, word/header2.xml, etc.
+func (p *Parser) GetHeaders() (map[string]*Header, error) {
+	if p.headers != nil {
+		return p.headers, nil
+	}
+
+	p.headers = make(map[string]*Header)
+
+	// Find all header files
+	for name := range p.files {
+		if strings.HasPrefix(name, "word/header") && strings.HasSuffix(name, ".xml") {
+			header := &Header{}
+			if err := p.readXML(name, header); err != nil {
+				continue // Skip invalid headers
+			}
+			// Extract the header ID from filename (e.g., "header1" from "word/header1.xml")
+			id := strings.TrimPrefix(name, "word/")
+			id = strings.TrimSuffix(id, ".xml")
+			p.headers[id] = header
+		}
+	}
+
+	return p.headers, nil
+}
+
+// GetFooters returns all parsed footers
+// Footers are stored in word/footer1.xml, word/footer2.xml, etc.
+func (p *Parser) GetFooters() (map[string]*Footer, error) {
+	if p.footers != nil {
+		return p.footers, nil
+	}
+
+	p.footers = make(map[string]*Footer)
+
+	// Find all footer files
+	for name := range p.files {
+		if strings.HasPrefix(name, "word/footer") && strings.HasSuffix(name, ".xml") {
+			footer := &Footer{}
+			if err := p.readXML(name, footer); err != nil {
+				continue // Skip invalid footers
+			}
+			// Extract the footer ID from filename (e.g., "footer1" from "word/footer1.xml")
+			id := strings.TrimPrefix(name, "word/")
+			id = strings.TrimSuffix(id, ".xml")
+			p.footers[id] = footer
+		}
+	}
+
+	return p.footers, nil
 }
 
 // readXML reads and parses an XML file from the ZIP archive

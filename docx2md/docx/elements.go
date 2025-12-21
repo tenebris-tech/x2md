@@ -350,3 +350,17 @@ type Endnote struct {
 	Type       string      `xml:"type,attr"` // "separator", "continuationSeparator", or empty for regular
 	Paragraphs []Paragraph `xml:"p"`
 }
+
+// Header represents a document header (word/header{n}.xml)
+type Header struct {
+	XMLName    xml.Name    `xml:"hdr"`
+	Paragraphs []Paragraph `xml:"p"`
+	Tables     []Table     `xml:"tbl"`
+}
+
+// Footer represents a document footer (word/footer{n}.xml)
+type Footer struct {
+	XMLName    xml.Name    `xml:"ftr"`
+	Paragraphs []Paragraph `xml:"p"`
+	Tables     []Table     `xml:"tbl"`
+}

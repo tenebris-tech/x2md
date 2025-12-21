@@ -31,6 +31,9 @@ type Options struct {
 	// PageSeparator is the separator between sections (currently unused as DOCX has no pages)
 	PageSeparator string
 
+	// ExtractHeadersFooters includes document headers and footers in output
+	ExtractHeadersFooters bool
+
 	// Callbacks for conversion progress
 	OnDocumentParsed func()
 	OnStylesParsed   func(styleCount int)
@@ -88,6 +91,13 @@ func WithOnDocumentParsed(callback func()) Option {
 func WithOnStylesParsed(callback func(styleCount int)) Option {
 	return func(o *Options) {
 		o.OnStylesParsed = callback
+	}
+}
+
+// WithExtractHeadersFooters sets whether to extract headers and footers
+func WithExtractHeadersFooters(extract bool) Option {
+	return func(o *Options) {
+		o.ExtractHeadersFooters = extract
 	}
 }
 
@@ -226,10 +236,35 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 
 	// Combine output
 	var output strings.Builder
+
+	// Add headers if requested
+	if c.options.ExtractHeadersFooters {
+		headers, err := extractor.ExtractHeaders()
+		if err == nil && len(headers) > 0 {
+			output.WriteString("## Document Headers\n\n")
+			for _, h := range headers {
+				output.WriteString(fmt.Sprintf("**%s**: %s\n\n", h.ID, h.Content))
+			}
+			output.WriteString("---\n\n")
+		}
+	}
+
+	// Main content
 	for _, page := range result.Pages {
 		for _, item := range page.Items {
 			if text, ok := item.(string); ok {
 				output.WriteString(text)
+			}
+		}
+	}
+
+	// Add footers if requested
+	if c.options.ExtractHeadersFooters {
+		footers, err := extractor.ExtractFooters()
+		if err == nil && len(footers) > 0 {
+			output.WriteString("\n\n---\n\n## Document Footers\n\n")
+			for _, f := range footers {
+				output.WriteString(fmt.Sprintf("**%s**: %s\n\n", f.ID, f.Content))
 			}
 		}
 	}
