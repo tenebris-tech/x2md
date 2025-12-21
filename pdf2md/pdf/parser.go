@@ -1083,6 +1083,12 @@ func (p *Parser) decodeFlateDecodeWithPredictor(data []byte, predictor, columns 
 
 // decodePNGPredictor decodes PNG predictor filtered data
 func (p *Parser) decodePNGPredictor(data []byte, columns int) ([]byte, error) {
+	if columns <= 0 {
+		return nil, fmt.Errorf("invalid columns value: %d", columns)
+	}
+	if len(data) == 0 {
+		return nil, nil
+	}
 	rowSize := columns + 1 // +1 for the filter byte
 	if len(data)%rowSize != 0 {
 		// Try without the extra filter byte per row
@@ -1200,6 +1206,9 @@ func (p *Parser) IsEncrypted() bool {
 
 // GetPageCount returns the number of pages in the document
 func (p *Parser) GetPageCount() (int, error) {
+	if p.trailer == nil {
+		return 0, fmt.Errorf("PDF not parsed: trailer is nil")
+	}
 	rootRef, ok := p.trailer["Root"].(*Reference)
 	if !ok {
 		return 0, fmt.Errorf("no Root in trailer")
@@ -1229,6 +1238,9 @@ func (p *Parser) GetPageCount() (int, error) {
 
 // GetPage retrieves a page object by index (0-based)
 func (p *Parser) GetPage(index int) (*Object, error) {
+	if p.trailer == nil {
+		return nil, fmt.Errorf("PDF not parsed: trailer is nil")
+	}
 	rootRef, ok := p.trailer["Root"].(*Reference)
 	if !ok {
 		return nil, fmt.Errorf("no Root in trailer")
@@ -1249,11 +1261,17 @@ func (p *Parser) GetPage(index int) (*Object, error) {
 		return nil, err
 	}
 
-	return p.findPage(pages, index, 0)
+	return p.findPage(pages, index, 0, 0)
 }
 
+// maxPageTreeDepth is the maximum recursion depth for page tree traversal
+const maxPageTreeDepth = 100
+
 // findPage recursively finds a page in the page tree
-func (p *Parser) findPage(node *Object, targetIndex, currentIndex int) (*Object, error) {
+func (p *Parser) findPage(node *Object, targetIndex, currentIndex, depth int) (*Object, error) {
+	if depth > maxPageTreeDepth {
+		return nil, fmt.Errorf("page tree exceeds maximum depth of %d (possible circular reference)", maxPageTreeDepth)
+	}
 	nodeType, _ := node.Dict["Type"].(string)
 
 	if nodeType == "/Page" {
@@ -1294,7 +1312,7 @@ func (p *Parser) findPage(node *Object, targetIndex, currentIndex int) (*Object,
 			}
 
 			if targetIndex >= currentIndex && targetIndex < currentIndex+count {
-				return p.findPage(kid, targetIndex, currentIndex)
+				return p.findPage(kid, targetIndex, currentIndex, depth+1)
 			}
 			currentIndex += count
 		}

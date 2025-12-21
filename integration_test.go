@@ -220,7 +220,10 @@ func TestDOCXFootnoteContent(t *testing.T) {
 	}
 }
 
-func TestEncryptedPDFRejection(t *testing.T) {
+func TestEncryptedPDFHandling(t *testing.T) {
+	// This test verifies that encrypted PDFs are handled correctly.
+	// With AES decryption support, permission-restricted PDFs (no user password)
+	// can now be decrypted. Only PDFs with unknown passwords should fail.
 	file := "private/itsg33-ann3a-eng.pdf"
 	if _, err := os.Stat(file); os.IsNotExist(err) {
 		t.Skipf("Test file not available: %s", file)
@@ -232,14 +235,19 @@ func TestEncryptedPDFRejection(t *testing.T) {
 	}
 
 	converter := pdf2md.New()
-	_, _, err = converter.ConvertWithImages(data)
+	result, _, err := converter.ConvertWithImages(data)
 
-	if err == nil {
-		t.Error("Expected error for encrypted PDF")
+	// If error occurs, it should mention encryption
+	if err != nil {
+		if !strings.Contains(err.Error(), "encrypt") {
+			t.Errorf("Expected encryption-related error, got: %v", err)
+		}
+		return
 	}
 
-	if !strings.Contains(err.Error(), "encrypted") {
-		t.Errorf("Expected 'encrypted' in error message, got: %v", err)
+	// If no error, we successfully decrypted - verify we got content
+	if len(result) == 0 {
+		t.Error("Expected non-empty result after decryption")
 	}
 }
 

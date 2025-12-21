@@ -63,6 +63,7 @@ type Options struct {
 	OnPageParsed         func(pageNum, totalPages int)
 	OnFontParsed         func(fontName string)
 	OnConversionComplete func()
+	OnPageSkipped        func(pageNum int, reason string)
 }
 
 // ShouldStrip checks if a given StripOption is enabled
@@ -146,6 +147,13 @@ func WithOnFontParsed(callback func(fontName string)) Option {
 func WithOnConversionComplete(callback func()) Option {
 	return func(o *Options) {
 		o.OnConversionComplete = callback
+	}
+}
+
+// WithOnPageSkipped sets the callback for skipped pages
+func WithOnPageSkipped(callback func(pageNum int, reason string)) Option {
+	return func(o *Options) {
+		o.OnPageSkipped = callback
 	}
 }
 
@@ -289,7 +297,10 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 	for i := 0; i < pageCount; i++ {
 		textItems, err := extractor.ExtractPage(i)
 		if err != nil {
-			// Skip pages that fail to extract
+			// Skip pages that fail to extract, notify via callback
+			if c.options.OnPageSkipped != nil {
+				c.options.OnPageSkipped(i+1, err.Error())
+			}
 			continue
 		}
 

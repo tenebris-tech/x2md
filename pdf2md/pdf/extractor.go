@@ -306,8 +306,13 @@ type GraphicsState struct {
 }
 
 // parseContentStream parses a content stream and extracts text items
-func (e *TextExtractor) parseContentStream(content []byte, mediaBox [4]float64) ([]TextItem, error) {
-	var items []TextItem
+func (e *TextExtractor) parseContentStream(content []byte, mediaBox [4]float64) (items []TextItem, err error) {
+	// Recover from panics caused by malformed content streams
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("content stream parsing panic: %v", r)
+		}
+	}()
 
 	// Initialize graphics state
 	gs := &GraphicsState{
