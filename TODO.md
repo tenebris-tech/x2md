@@ -60,7 +60,7 @@ Both PDF and DOCX support image extraction:
 2. **Complex Layouts**: Overlapping text regions may not convert perfectly
 3. **Font Encodings**: Some non-standard fonts may have character issues
 4. **Math Formulas**: Converted as plain text
-5. **LZW Compression**: Not implemented (gracefully skipped)
+5. ~~**LZW Compression**~~: Now implemented
 6. **Encrypted PDFs**: Not supported (graceful error message)
 
 ### Issues Discovered During Testing (2025-12-19)
@@ -211,6 +211,10 @@ When making changes, verify:
    - WithExtractHeadersFooters option for converter
 
 ### Low Priority
-9. **LZW Compression** - Implement for image extraction
+9. ~~**LZW Compression**~~ - Completed:
+   - Implemented decodeLZW() using Go's compress/lzw
+   - PDF uses MSB bit order with literal width of 8
+   - Added decodeLZWWithPredictor() for PNG predictor support
+   - Unit tests for round-trip compression/decompression
 10. **OCR Integration** - Optional OCR for scanned PDFs
 11. **Performance Optimization** - Large document handling

@@ -114,15 +114,12 @@ None
 None
 
 ### Medium Priority
-1. **LZW Compression**: Not implemented for PDF image extraction. Gracefully
-   skipped with warning.
-2. **DOCX Nested Tables**: May not render perfectly in all cases.
-3. **Encrypted PDFs**: Not supported (graceful error message)
+1. **DOCX Nested Tables**: May not render perfectly in all cases.
+2. **Encrypted PDFs**: Not supported (graceful error message)
 
 ### Low Priority
-4. **Scanned PDFs**: OCR not supported
-5. **Math formulas**: Converted as plain text
-6. **DOCX Headers/Footers**: Not extracted
+3. **Scanned PDFs**: OCR not supported
+4. **Math formulas**: Converted as plain text
 
 ---
 
@@ -210,13 +207,13 @@ DOCX File (ZIP)
 5. [ ] **Error Recovery**: Better handling of malformed DOCX files
 
 ### Before v1.0
-6. [ ] **PDF List Nesting**: Better indentation detection from X position
-7. [ ] **Table Column Heuristics**: Improve column boundary detection
-8. [ ] **DOCX Headers/Footers**: Optional extraction with flag
+6. [x] **PDF List Nesting**: Better indentation detection from X position
+7. [x] **Table Column Heuristics**: Improve column boundary detection
+8. [x] **DOCX Headers/Footers**: Optional extraction with flag
 9. [ ] **Performance Testing**: Large document handling (1000+ pages)
 
 ### Future
-10. [ ] **LZW Compression**: For PDF image extraction
+10. [x] **LZW Compression**: For PDF image extraction
 11. [ ] **OCR Integration**: Optional for scanned PDFs
 12. [ ] **RTF Support**: New format
 

@@ -342,7 +342,7 @@ Supported formats: JPEG (direct extraction), PNG (for raw pixel data)
 - Complex multi-column layouts may interleave columns
 - Non-standard font encodings may cause character issues
 - Mathematical formulas are converted as plain text
-- LZW compression not implemented (gracefully skipped)
+- LZW compression supported for image extraction
 - Encrypted PDFs are not supported (clear error message provided)
 
 ---

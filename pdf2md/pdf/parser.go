@@ -3,6 +3,7 @@ package pdf
 
 import (
 	"bytes"
+	"compress/lzw"
 	"compress/zlib"
 	"fmt"
 	"io"
@@ -1520,10 +1521,46 @@ func (p *Parser) decodeASCIIHex(data []byte) ([]byte, error) {
 	return result, nil
 }
 
-// decodeLZW decodes LZW compressed data (simplified implementation)
+// decodeLZW decodes LZW compressed data
+// PDF uses LZW with MSB bit order and a literal width of 8
 func (p *Parser) decodeLZW(data []byte) ([]byte, error) {
-	// LZW decoding is complex - for now, return an error to be handled
-	return nil, fmt.Errorf("LZW decoding not fully implemented")
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	// PDF uses MSB (Most Significant Bit first) order
+	// litWidth of 8 means codes start at 9 bits
+	r := lzw.NewReader(bytes.NewReader(data), lzw.MSB, 8)
+	defer r.Close()
+
+	decoded, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("LZW decompression failed: %w", err)
+	}
+
+	return decoded, nil
+}
+
+// decodeLZWWithPredictor decodes LZW with PNG predictor
+func (p *Parser) decodeLZWWithPredictor(data []byte, predictor, columns int) ([]byte, error) {
+	// First decompress
+	decompressed, err := p.decodeLZW(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// If no predictor or predictor 1 (no prediction), return as-is
+	if predictor <= 1 {
+		return decompressed, nil
+	}
+
+	// PNG predictors (10-15)
+	if predictor >= 10 && predictor <= 15 {
+		return p.decodePNGPredictor(decompressed, columns)
+	}
+
+	// TIFF predictor (2) - not implemented
+	return decompressed, nil
 }
 
 // ImageData contains extracted image information from a PDF
