@@ -2,10 +2,23 @@
 
 x2md is a utility and set of libraries for converting various file types to Markdown. It is written in pure Go with no CGO dependencies, making it easy to cross-compile for any platform.
 
+## Quick Start
+
+```bash
+# Install
+go install github.com/tenebris-tech/x2md@latest
+
+# Convert a file - that's it!
+x2md document.pdf      # Creates document.md
+x2md document.docx     # Creates document.md
+```
+
+The defaults work well for most documents. Scanned PDFs are automatically detected and extracted as page images.
+
 ## Supported Formats
 
-- [PDF](#pdf2md) - Text-based PDF documents
-- [DOCX](#docx2md) - Microsoft Word documents (.docx)
+- **PDF** - Text-based and scanned PDF documents
+- **DOCX** - Microsoft Word documents (.docx)
 
 ## Installation
 
@@ -66,6 +79,7 @@ go install github.com/tenebris-tech/x2md@latest
 | `-strip-blank-pages` | Remove blank pages (PDF only) |
 | `-no-lists` | Disable list detection (PDF only) |
 | `-no-headings` | Disable heading detection (PDF only) |
+| `-no-scan-mode` | Disable automatic scanned page detection (PDF only) |
 
 ---
 
@@ -78,10 +92,14 @@ The `convert` package provides a unified API for batch document conversion with 
 ```go
 import "github.com/tenebris-tech/x2md/convert"
 
-// Convert a single file (output placed next to source)
+// Simple usage - convert a file with defaults
 c := convert.New()
 result, err := c.Convert("document.pdf")
+```
 
+For batch processing:
+
+```go
 // Convert a directory recursively
 c := convert.New(convert.WithRecursion(true))
 result, err := c.Convert("./documents")
@@ -231,6 +249,7 @@ The `pdf2md` package converts PDF documents to Markdown.
 
 - No external dependencies or CGO
 - Converts PDF text content to well-formatted Markdown
+- **Automatic scanned page detection** - extracts page images for OCR/LLM processing
 - Detects and preserves document structure:
   - Headings (H1-H6) based on font size
   - Lists (bulleted and numbered) with nesting
@@ -250,23 +269,23 @@ The `pdf2md` package converts PDF documents to Markdown.
 ```go
 import "github.com/tenebris-tech/x2md/pdf2md"
 
-// Basic usage
+// Simple usage - defaults handle most cases well
 converter := pdf2md.New()
-markdown, err := converter.ConvertFile("input.pdf")
+err := converter.ConvertFileToFile("input.pdf", "output.md")
+```
 
-// With options
+For more control:
+
+```go
+// Customize behavior with options
 converter := pdf2md.New(
-    pdf2md.WithDetectLists(true),
-    pdf2md.WithDetectHeadings(true),
-    pdf2md.WithPreserveFormatting(true),
-    pdf2md.WithExtractImages(true),
+    pdf2md.WithScanMode(false),           // Disable scanned page detection
+    pdf2md.WithExtractImages(false),      // Skip image extraction
+    pdf2md.WithStrip(pdf2md.HeadersFooters, pdf2md.PageNumbers),
 )
 markdown, err := converter.ConvertFile("input.pdf")
 
-// File to file conversion (handles image extraction automatically)
-err := converter.ConvertFileToFile("input.pdf", "output.md")
-
-// With image extraction from bytes
+// Get markdown and images separately
 data, _ := os.ReadFile("input.pdf")
 markdown, images, err := converter.ConvertWithImages(data)
 // images is []*models.ImageItem with ID, Data, Format fields
@@ -276,6 +295,7 @@ markdown, images, err := converter.ConvertWithImages(data)
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `WithScanMode(bool)` | Auto-detect scanned pages and extract as images | true |
 | `WithStrip(...StripOption)` | Content to strip (HeadersFooters, PageNumbers, TOC, Footnotes, BlankPages) | HeadersFooters, BlankPages |
 | `WithDetectLists(bool)` | Enable list detection | true |
 | `WithDetectHeadings(bool)` | Enable heading detection | true |
@@ -336,13 +356,29 @@ Markdown references are automatically inserted: `![alt](input_images/image_001.p
 
 Supported formats: JPEG (direct extraction), PNG (for raw pixel data)
 
+#### Scanned PDF Handling
+
+Scanned pages are automatically detected and extracted as images:
+```
+scanned.pdf → scanned.md + scanned_images/page_001.jpg, page_002.jpg, ...
+```
+
+The markdown contains image references ready for OCR or LLM processing:
+```markdown
+![Page 1](scanned_images/page_001.jpg)
+
+![Page 2](scanned_images/page_002.jpg)
+```
+
+Detection criteria: pages with <100 characters of text and large images (>50% of page size or >500×500 pixels).
+
+Mixed documents (some scanned, some text) are handled automatically.
+
 #### Limitations
 
-- Scanned PDFs (image-only) produce no text output
 - Complex multi-column layouts may interleave columns
 - Non-standard font encodings may cause character issues
 - Mathematical formulas are converted as plain text
-- LZW compression supported for image extraction
 - Encrypted PDFs are not supported (clear error message provided)
 
 ---
@@ -371,21 +407,22 @@ The `docx2md` package converts Microsoft Word documents to Markdown.
 ```go
 import "github.com/tenebris-tech/x2md/docx2md"
 
-// Basic usage
+// Simple usage - defaults handle most cases well
 converter := docx2md.New()
-markdown, err := converter.ConvertFile("input.docx")
+err := converter.ConvertFileToFile("input.docx", "output.md")
+```
 
-// With options
+For more control:
+
+```go
+// Customize behavior with options
 converter := docx2md.New(
-    docx2md.WithPreserveFormatting(true),
-    docx2md.WithPreserveImages(true),
+    docx2md.WithPreserveFormatting(false),  // Skip bold/italic
+    docx2md.WithPreserveImages(false),      // Skip image extraction
 )
 markdown, err := converter.ConvertFile("input.docx")
 
-// File to file conversion (handles image extraction automatically)
-err := converter.ConvertFileToFile("input.docx", "output.md")
-
-// With image extraction from bytes
+// Get markdown and images separately
 data, _ := os.ReadFile("input.docx")
 markdown, images, err := converter.ConvertWithImages(data)
 ```
