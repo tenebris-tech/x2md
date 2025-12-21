@@ -226,8 +226,13 @@ func (c *Converter) walkDir(dir string, result *Result) {
 		// Get file info, following symlinks
 		info, err := os.Stat(path)
 		if err != nil {
-			result.Failed++
-			result.Errors = append(result.Errors, fmt.Errorf("cannot stat %s: %w", path, err))
+			// Only count as failure if it looks like a convertible file
+			ext := strings.ToLower(filepath.Ext(path))
+			if c.hasExtension(ext) {
+				result.Failed++
+				result.Errors = append(result.Errors, fmt.Errorf("cannot access %s: %w", path, err))
+			}
+			// Silently skip broken symlinks to directories or non-convertible files
 			continue
 		}
 
