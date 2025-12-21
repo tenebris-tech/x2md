@@ -4,8 +4,8 @@ x2md is a utility and set of libraries for converting various file types to Mark
 
 ## Supported Formats
 
-- [PDF](#pdf-conversion) - Text-based PDF documents
-- [DOCX](#docx-conversion) - Microsoft Word documents (.docx)
+- [PDF](#pdf2md) - Text-based PDF documents
+- [DOCX](#docx2md) - Microsoft Word documents (.docx)
 
 ## Installation
 
@@ -21,6 +21,8 @@ go install github.com/tenebris-tech/x2md@latest
 
 ## CLI Usage
 
+### Single File Conversion
+
 ```bash
 # Convert a file (outputs to same name with .md extension)
 ./x2md input.pdf
@@ -31,18 +33,32 @@ go install github.com/tenebris-tech/x2md@latest
 
 # Verbose mode
 ./x2md -v input.pdf
+```
 
-# Disable image extraction
-./x2md -no-images input.pdf
+### Batch Conversion
+
+```bash
+# Recursively convert all PDF and DOCX files in a directory
+./x2md -r ./documents
+
+# Convert to a flat output directory
+./x2md -r -output-dir ./markdown ./documents
+
+# Don't skip existing .md files (creates numbered versions)
+./x2md -r -skip-existing=false ./documents
 ```
 
 ### CLI Options
 
 | Option | Description |
 |--------|-------------|
-| `-output` | Specify output file path |
+| `-r` | Recursively process directories |
+| `-output` | Specify output file path (single file mode only) |
+| `-output-dir` | Output directory for all converted files (flat structure) |
+| `-skip-existing` | Skip files where .md already exists (default: true) |
 | `-v` | Verbose mode with progress output |
 | `-no-images` | Disable image extraction |
+| `-no-formatting` | Disable bold/italic formatting |
 | `-strip-headers` | Remove repetitive headers/footers (PDF only) |
 | `-strip-page-numbers` | Remove page numbers (PDF only) |
 | `-strip-toc` | Remove table of contents (PDF only) |
@@ -50,13 +66,168 @@ go install github.com/tenebris-tech/x2md@latest
 | `-strip-blank-pages` | Remove blank pages (PDF only) |
 | `-no-lists` | Disable list detection (PDF only) |
 | `-no-headings` | Disable heading detection (PDF only) |
-| `-no-formatting` | Disable bold/italic formatting |
 
 ---
 
-## PDF Conversion
+## Convert Package
 
-### Features
+The `convert` package provides a unified API for batch document conversion with support for recursive directory traversal, output management, and pass-through options to the underlying converters.
+
+### Basic Usage
+
+```go
+import "github.com/tenebris-tech/x2md/convert"
+
+// Convert a single file (output placed next to source)
+c := convert.New()
+result, err := c.Convert("document.pdf")
+
+// Convert a directory recursively
+c := convert.New(convert.WithRecursion(true))
+result, err := c.Convert("./documents")
+
+// Check results
+fmt.Printf("Converted: %d, Skipped: %d, Failed: %d\n",
+    result.Converted, result.Skipped, result.Failed)
+```
+
+### Options
+
+#### WithRecursion(bool)
+
+Enable recursive directory traversal. When false (default), Convert() only accepts file paths. When true, it accepts both files and directories.
+
+```go
+c := convert.New(convert.WithRecursion(true))
+result, _ := c.Convert("./documents")  // Processes all subdirectories
+```
+
+#### WithExtensions([]string)
+
+Specify which file extensions to convert. Default: `[]string{".pdf", ".docx"}`
+
+```go
+// Only convert PDF files
+c := convert.New(
+    convert.WithRecursion(true),
+    convert.WithExtensions([]string{".pdf"}),
+)
+```
+
+#### WithSkipExisting(bool)
+
+Skip files where the output .md file already exists. Default: true
+
+When false, existing files are not overwritten. Instead, numbered versions are created (e.g., `document-1.md`, `document-2.md`).
+
+```go
+// Create numbered versions instead of skipping
+c := convert.New(convert.WithSkipExisting(false))
+```
+
+#### WithOutputDirectory(string)
+
+Write all output files to a specified directory with a flat structure. By default, output files are placed next to their source files.
+
+```go
+// All .md files go to ./output, regardless of source location
+c := convert.New(
+    convert.WithRecursion(true),
+    convert.WithOutputDirectory("./output"),
+)
+```
+
+When files from different directories have the same name, numbered versions are created automatically.
+
+#### WithVerbose(bool)
+
+Enable verbose output (primarily for debugging).
+
+```go
+c := convert.New(convert.WithVerbose(true))
+```
+
+#### WithPDFOptions(...pdf2md.Option)
+
+Pass options through to the PDF converter.
+
+```go
+import "github.com/tenebris-tech/x2md/pdf2md"
+
+c := convert.New(
+    convert.WithRecursion(true),
+    convert.WithPDFOptions(
+        pdf2md.WithExtractImages(false),
+        pdf2md.WithDetectHeadings(true),
+        pdf2md.WithStrip(pdf2md.HeadersFooters, pdf2md.BlankPages),
+    ),
+)
+```
+
+#### WithDOCXOptions(...docx2md.Option)
+
+Pass options through to the DOCX converter.
+
+```go
+import "github.com/tenebris-tech/x2md/docx2md"
+
+c := convert.New(
+    convert.WithRecursion(true),
+    convert.WithDOCXOptions(
+        docx2md.WithPreserveImages(false),
+        docx2md.WithPreserveFormatting(true),
+    ),
+)
+```
+
+#### WithOnFileStart / WithOnFileComplete
+
+Set callbacks for conversion progress monitoring.
+
+```go
+c := convert.New(
+    convert.WithRecursion(true),
+    convert.WithOnFileStart(func(path string) {
+        fmt.Printf("Converting: %s\n", path)
+    }),
+    convert.WithOnFileComplete(func(path, outputPath string, err error) {
+        if err != nil {
+            fmt.Printf("  Failed: %v\n", err)
+        } else {
+            fmt.Printf("  Created: %s\n", outputPath)
+        }
+    }),
+)
+```
+
+### Result Structure
+
+```go
+type Result struct {
+    Converted int      // Number of files successfully converted
+    Skipped   int      // Number of files skipped (already exist)
+    Failed    int      // Number of files that failed
+    Errors    []error  // Details of failures
+}
+```
+
+### Edge Cases Handled
+
+- **Broken symlinks**: Reported as failures, processing continues
+- **Symlink loops**: Detected and avoided via real path tracking
+- **Duplicate files**: Files reached via different symlinks are converted only once
+- **Name conflicts**: When output files would conflict, numbered versions are created
+- **Directories with .pdf/.docx extensions**: Correctly identified as directories, not files
+
+---
+
+## Converters
+
+### pdf2md
+
+The `pdf2md` package converts PDF documents to Markdown.
+
+#### Features
 
 - No external dependencies or CGO
 - Converts PDF text content to well-formatted Markdown
@@ -74,7 +245,47 @@ go install github.com/tenebris-tech/x2md@latest
 - Detects and rejects encrypted PDFs with clear error message
 - Cross-platform support
 
-### How It Works
+#### Library Usage
+
+```go
+import "github.com/tenebris-tech/x2md/pdf2md"
+
+// Basic usage
+converter := pdf2md.New()
+markdown, err := converter.ConvertFile("input.pdf")
+
+// With options
+converter := pdf2md.New(
+    pdf2md.WithDetectLists(true),
+    pdf2md.WithDetectHeadings(true),
+    pdf2md.WithPreserveFormatting(true),
+    pdf2md.WithExtractImages(true),
+)
+markdown, err := converter.ConvertFile("input.pdf")
+
+// File to file conversion (handles image extraction automatically)
+err := converter.ConvertFileToFile("input.pdf", "output.md")
+
+// With image extraction from bytes
+data, _ := os.ReadFile("input.pdf")
+markdown, images, err := converter.ConvertWithImages(data)
+// images is []*models.ImageItem with ID, Data, Format fields
+```
+
+#### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `WithStrip(...StripOption)` | Content to strip (HeadersFooters, PageNumbers, TOC, Footnotes, BlankPages) | HeadersFooters, BlankPages |
+| `WithDetectLists(bool)` | Enable list detection | true |
+| `WithDetectHeadings(bool)` | Enable heading detection | true |
+| `WithPreserveFormatting(bool)` | Preserve bold/italic | true |
+| `WithExtractImages(bool)` | Extract images | true |
+| `WithPageSeparator(string)` | Separator between pages | "\n" |
+| `WithOnPageParsed(func)` | Callback for page progress | nil |
+| `WithOnFontParsed(func)` | Callback for font discovery | nil |
+
+#### How It Works
 
 The PDF converter uses a multi-stage transformation pipeline:
 
@@ -105,7 +316,7 @@ PDF Binary → Parser → Text Items → Lines → Blocks → Markdown
 9. `ToTextBlocks` - Convert to text representation
 10. `ToMarkdown` - Generate final markdown with table merging
 
-### Table Detection
+#### Table Detection
 
 The library detects tables using multiple strategies:
 - **Header-based**: Rows with well-spaced column headers
@@ -114,7 +325,7 @@ The library detects tables using multiple strategies:
 - **Cross-page merging**: Automatically joins tables split across pages
 - **Header deduplication**: Removes repeated headers from continuation pages
 
-### Image Extraction
+#### Image Extraction
 
 Images are extracted and saved to a subdirectory:
 ```
@@ -125,7 +336,7 @@ Markdown references are automatically inserted: `![alt](input_images/image_001.p
 
 Supported formats: JPEG (direct extraction), PNG (for raw pixel data)
 
-### Limitations
+#### Limitations
 
 - Scanned PDFs (image-only) produce no text output
 - Complex multi-column layouts may interleave columns
@@ -134,34 +345,13 @@ Supported formats: JPEG (direct extraction), PNG (for raw pixel data)
 - LZW compression not implemented (gracefully skipped)
 - Encrypted PDFs are not supported (clear error message provided)
 
-### Library Usage (PDF)
-
-```go
-import "github.com/tenebris-tech/x2md/pdf2md"
-
-// Basic usage
-converter := pdf2md.New()
-markdown, err := converter.ConvertFile("input.pdf")
-
-// With options
-converter := pdf2md.New(
-    pdf2md.WithDetectLists(true),
-    pdf2md.WithDetectHeadings(true),
-    pdf2md.WithPreserveFormatting(true),
-)
-markdown, err := converter.ConvertFile("input.pdf")
-
-// With image extraction
-data, _ := os.ReadFile("input.pdf")
-markdown, images, err := converter.ConvertWithImages(data)
-// images is []ImageData with Name, Data, Format fields
-```
-
 ---
 
-## DOCX Conversion
+### docx2md
 
-### Features
+The `docx2md` package converts Microsoft Word documents to Markdown.
+
+#### Features
 
 - Pure Go implementation - no CGO or external dependencies
 - Parses DOCX (Office Open XML) format directly
@@ -176,7 +366,42 @@ markdown, images, err := converter.ConvertWithImages(data)
 - Handles text runs split across XML elements (common in edited documents)
 - Cross-platform support
 
-### How It Works
+#### Library Usage
+
+```go
+import "github.com/tenebris-tech/x2md/docx2md"
+
+// Basic usage
+converter := docx2md.New()
+markdown, err := converter.ConvertFile("input.docx")
+
+// With options
+converter := docx2md.New(
+    docx2md.WithPreserveFormatting(true),
+    docx2md.WithPreserveImages(true),
+)
+markdown, err := converter.ConvertFile("input.docx")
+
+// File to file conversion (handles image extraction automatically)
+err := converter.ConvertFileToFile("input.docx", "output.md")
+
+// With image extraction from bytes
+data, _ := os.ReadFile("input.docx")
+markdown, images, err := converter.ConvertWithImages(data)
+```
+
+#### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `WithPreserveFormatting(bool)` | Preserve bold/italic | true |
+| `WithPreserveImages(bool)` | Extract and include images | true |
+| `WithImageLinkFormat(string)` | Template for image links | "![%s](%s)" |
+| `WithPageSeparator(string)` | Separator between sections | "\n" |
+| `WithOnDocumentParsed(func)` | Callback when document is parsed | nil |
+| `WithOnStylesParsed(func)` | Callback with style count | nil |
+
+#### How It Works
 
 DOCX files are ZIP archives containing XML files:
 
@@ -216,7 +441,7 @@ document.docx (ZIP)
 - Adds proper spacing between paragraphs (`\n\n`)
 - Generates markdown table syntax for Word tables
 
-### Footnotes and Endnotes
+#### Footnotes and Endnotes
 
 Footnotes are converted to markdown footnote syntax:
 ```markdown
@@ -227,39 +452,19 @@ This is text with a footnote[^1].
 [^1]: This is the footnote content with [links](https://example.com).
 ```
 
-### Image Extraction
+#### Image Extraction
 
 Images are extracted from `word/media/` and saved to a subdirectory:
 ```
 input.docx → input.md + input_images/image_001.png, image_002.jpg, ...
 ```
 
-### Limitations
+#### Limitations
 
 - Complex nested tables may not render perfectly
 - Advanced formatting (text boxes, shapes, SmartArt) is ignored
 - Comments and tracked changes are not included
 - Document headers/footers are not extracted
-
-### Library Usage (DOCX)
-
-```go
-import "github.com/tenebris-tech/x2md/docx2md"
-
-// Basic usage
-converter := docx2md.New()
-markdown, err := converter.ConvertFile("input.docx")
-
-// With options
-converter := docx2md.New(
-    docx2md.WithPreserveFormatting(true),
-)
-markdown, err := converter.ConvertFile("input.docx")
-
-// With image extraction
-data, _ := os.ReadFile("input.docx")
-markdown, images, err := converter.ConvertWithImages(data)
-```
 
 ---
 
@@ -267,8 +472,11 @@ markdown, images, err := converter.ConvertWithImages(data)
 
 ```
 x2md/
-├── main.go                 # CLI entry point, format detection
+├── main.go                 # CLI entry point
 ├── integration_test.go     # Integration/regression tests
+├── convert/                # Unified conversion package
+│   ├── converter.go        # Batch conversion with options
+│   └── converter_test.go   # Unit tests
 ├── pdf2md/                 # PDF conversion package
 │   ├── converter.go        # Public API with functional options
 │   ├── pdf/                # Low-level PDF parsing
