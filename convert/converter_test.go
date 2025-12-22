@@ -140,8 +140,8 @@ func TestConvertSingleDocxFile(t *testing.T) {
 		t.Errorf("Expected 1 converted, got %d", result.Converted)
 	}
 
-	// Check output file exists
-	mdPath := filepath.Join(tmpDir, "test.md")
+	// Check output file exists (now uses .docx.md naming)
+	mdPath := filepath.Join(tmpDir, "test.docx.md")
 	if _, err := os.Stat(mdPath); os.IsNotExist(err) {
 		t.Error("Expected output file to exist")
 	}
@@ -201,12 +201,12 @@ func TestConvertDirectoryWithRecursion(t *testing.T) {
 		t.Errorf("Expected 2 converted, got %d", result.Converted)
 	}
 
-	// Check output files exist
-	if _, err := os.Stat(filepath.Join(tmpDir, "file1.md")); os.IsNotExist(err) {
-		t.Error("Expected file1.md to exist")
+	// Check output files exist (now uses .docx.md naming)
+	if _, err := os.Stat(filepath.Join(tmpDir, "file1.docx.md")); os.IsNotExist(err) {
+		t.Error("Expected file1.docx.md to exist")
 	}
-	if _, err := os.Stat(filepath.Join(subDir, "file2.md")); os.IsNotExist(err) {
-		t.Error("Expected file2.md to exist")
+	if _, err := os.Stat(filepath.Join(subDir, "file2.docx.md")); os.IsNotExist(err) {
+		t.Error("Expected file2.docx.md to exist")
 	}
 }
 
@@ -224,8 +224,8 @@ func TestSkipExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create existing .md file
-	mdPath := filepath.Join(tmpDir, "test.md")
+	// Create existing .md file (now uses .docx.md naming)
+	mdPath := filepath.Join(tmpDir, "test.docx.md")
 	if err := os.WriteFile(mdPath, []byte("existing"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -262,8 +262,8 @@ func TestNoSkipExistingCreatesNumberedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create existing .md file
-	mdPath := filepath.Join(tmpDir, "test.md")
+	// Create existing .md file (now uses .docx.md naming)
+	mdPath := filepath.Join(tmpDir, "test.docx.md")
 	if err := os.WriteFile(mdPath, []byte("existing"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -279,15 +279,15 @@ func TestNoSkipExistingCreatesNumberedFile(t *testing.T) {
 		t.Errorf("Expected 1 converted, got %d", result.Converted)
 	}
 
-	// Check numbered file was created
-	numberedPath := filepath.Join(tmpDir, "test-1.md")
+	// Check numbered file was created (now uses .docx-1.md naming)
+	numberedPath := filepath.Join(tmpDir, "test.docx-1.md")
 	if _, err := os.Stat(numberedPath); os.IsNotExist(err) {
-		t.Error("Expected test-1.md to exist")
+		t.Error("Expected test.docx-1.md to exist")
 	}
 
 	// Verify original still exists
 	if _, err := os.Stat(mdPath); os.IsNotExist(err) {
-		t.Error("Expected test.md to still exist")
+		t.Error("Expected test.docx.md to still exist")
 	}
 }
 
@@ -322,16 +322,16 @@ func TestOutputDirectory(t *testing.T) {
 		t.Errorf("Expected 1 converted, got %d", result.Converted)
 	}
 
-	// Check output file in output directory
-	mdPath := filepath.Join(outDir, "test.md")
+	// Check output file in output directory (now uses .docx.md naming)
+	mdPath := filepath.Join(outDir, "test.docx.md")
 	if _, err := os.Stat(mdPath); os.IsNotExist(err) {
-		t.Error("Expected test.md in output directory")
+		t.Error("Expected test.docx.md in output directory")
 	}
 
 	// Verify no file created next to source
-	srcMdPath := filepath.Join(srcDir, "test.md")
+	srcMdPath := filepath.Join(srcDir, "test.docx.md")
 	if _, err := os.Stat(srcMdPath); !os.IsNotExist(err) {
-		t.Error("Expected no test.md next to source file")
+		t.Error("Expected no test.docx.md next to source file")
 	}
 }
 
@@ -369,12 +369,12 @@ func TestOutputDirectoryFlatStructure(t *testing.T) {
 		t.Errorf("Expected 2 converted, got %d", result.Converted)
 	}
 
-	// Check both files in output directory (flat)
-	if _, err := os.Stat(filepath.Join(outDir, "file1.md")); os.IsNotExist(err) {
-		t.Error("Expected file1.md in output directory")
+	// Check both files in output directory (flat, now uses .docx.md naming)
+	if _, err := os.Stat(filepath.Join(outDir, "file1.docx.md")); os.IsNotExist(err) {
+		t.Error("Expected file1.docx.md in output directory")
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "file2.md")); os.IsNotExist(err) {
-		t.Error("Expected file2.md in output directory")
+	if _, err := os.Stat(filepath.Join(outDir, "file2.docx.md")); os.IsNotExist(err) {
+		t.Error("Expected file2.docx.md in output directory")
 	}
 }
 
@@ -412,12 +412,12 @@ func TestOutputDirectoryConflictingNames(t *testing.T) {
 		t.Errorf("Expected 2 converted, got %d", result.Converted)
 	}
 
-	// Check both files exist (one numbered)
-	if _, err := os.Stat(filepath.Join(outDir, "test.md")); os.IsNotExist(err) {
-		t.Error("Expected test.md in output directory")
+	// Check both files exist (one numbered, now uses .docx.md naming)
+	if _, err := os.Stat(filepath.Join(outDir, "test.docx.md")); os.IsNotExist(err) {
+		t.Error("Expected test.docx.md in output directory")
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "test-1.md")); os.IsNotExist(err) {
-		t.Error("Expected test-1.md in output directory")
+	if _, err := os.Stat(filepath.Join(outDir, "test.docx-1.md")); os.IsNotExist(err) {
+		t.Error("Expected test.docx-1.md in output directory")
 	}
 }
 

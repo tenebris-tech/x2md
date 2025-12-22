@@ -53,6 +53,9 @@ type Options struct {
 
 	// OnFileComplete is called when a file conversion completes
 	OnFileComplete func(path, outputPath string, err error)
+
+	// OnFileSkipped is called when a file is skipped (e.g., .md already exists)
+	OnFileSkipped func(path, outputPath, reason string)
 }
 
 // Result contains the results of a conversion operation
@@ -144,6 +147,13 @@ func WithOnFileStart(callback func(path string)) Option {
 func WithOnFileComplete(callback func(path, outputPath string, err error)) Option {
 	return func(o *Options) {
 		o.OnFileComplete = callback
+	}
+}
+
+// WithOnFileSkipped sets the callback for when a file is skipped
+func WithOnFileSkipped(callback func(path, outputPath, reason string)) Option {
+	return func(o *Options) {
+		o.OnFileSkipped = callback
 	}
 }
 
@@ -267,8 +277,11 @@ func (c *Converter) processFile(path string, result *Result) {
 	c.processedFiles[realPath] = true
 
 	// Determine output path
-	outputPath, skip := c.getOutputPath(realPath, ext)
+	outputPath, skip, reason := c.getOutputPath(realPath, ext)
 	if skip {
+		if c.options.OnFileSkipped != nil {
+			c.options.OnFileSkipped(realPath, outputPath, reason)
+		}
 		result.Skipped++
 		return
 	}
@@ -311,9 +324,10 @@ func (c *Converter) hasExtension(ext string) bool {
 }
 
 // getOutputPath determines the output path for a given input file.
-// Returns the output path and whether to skip the file.
-func (c *Converter) getOutputPath(inputPath, ext string) (string, bool) {
-	baseName := strings.TrimSuffix(filepath.Base(inputPath), ext)
+// Returns the output path, whether to skip the file, and the skip reason.
+func (c *Converter) getOutputPath(inputPath, ext string) (string, bool, string) {
+	// Append .md to full filename (e.g., file.pdf -> file.pdf.md)
+	baseName := filepath.Base(inputPath)
 
 	var outputPath string
 	if c.options.OutputDirectory != "" {
@@ -321,19 +335,19 @@ func (c *Converter) getOutputPath(inputPath, ext string) (string, bool) {
 		outputPath = filepath.Join(c.options.OutputDirectory, baseName+".md")
 	} else {
 		// Output next to source file
-		outputPath = strings.TrimSuffix(inputPath, ext) + ".md"
+		outputPath = inputPath + ".md"
 	}
 
 	// Check if output file already exists
 	if _, err := os.Stat(outputPath); err == nil {
 		if c.options.SkipExisting {
-			return outputPath, true
+			return outputPath, true, "output file exists"
 		}
 		// Find a unique name
 		outputPath = c.findUniquePath(outputPath)
 	}
 
-	return outputPath, false
+	return outputPath, false, ""
 }
 
 // findUniquePath finds a unique output path by appending a number

@@ -120,6 +120,9 @@ func main() {
 				fmt.Printf("  Created: %s\n", outputPath)
 			}
 		}))
+		converterOpts = append(converterOpts, convert.WithOnFileSkipped(func(path, outputPath, reason string) {
+			fmt.Printf("Skipped: %s (%s)\n", path, reason)
+		}))
 
 		// Add PDF-specific verbose callbacks
 		pdfOpts = append(pdfOpts,
