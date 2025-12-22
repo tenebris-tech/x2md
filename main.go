@@ -31,9 +31,15 @@ func main() {
 	// Common options
 	noFormatting := flag.Bool("no-formatting", false, "Don't preserve bold/italic formatting")
 	noImages := flag.Bool("no-images", false, "Don't extract images")
-	verbose := flag.Bool("v", false, "Verbose output")
+	verbose := flag.Bool("v", false, "Show file disposition (converted/skipped/error)")
+	debug := flag.Bool("d", false, "Debug output (includes page/font/style details)")
 
 	flag.Parse()
+
+	// Debug implies verbose
+	if *debug {
+		*verbose = true
+	}
 
 	// Check for positional argument
 	inputPath := ""
@@ -108,40 +114,40 @@ func main() {
 		converterOpts = append(converterOpts, convert.WithDOCXOptions(docxOpts...))
 	}
 
-	// Add verbose callbacks
+	// Add verbose callbacks (-v: one line per file)
 	if *verbose {
-		converterOpts = append(converterOpts, convert.WithOnFileStart(func(path string) {
-			fmt.Printf("Converting: %s\n", path)
-		}))
 		converterOpts = append(converterOpts, convert.WithOnFileComplete(func(path, outputPath string, err error) {
 			if err != nil {
-				fmt.Printf("  Error: %v\n", err)
+				fmt.Printf("Error: %s: %v\n", path, err)
 			} else {
-				fmt.Printf("  Created: %s\n", outputPath)
+				fmt.Printf("Converted: %s\n", path)
 			}
 		}))
 		converterOpts = append(converterOpts, convert.WithOnFileSkipped(func(path, outputPath, reason string) {
 			fmt.Printf("Skipped: %s (%s)\n", path, reason)
 		}))
+	}
 
-		// Add PDF-specific verbose callbacks
+	// Add debug callbacks (-d: detailed processing info)
+	if *debug {
+		// PDF-specific debug callbacks
 		pdfOpts = append(pdfOpts,
 			pdf2md.WithOnPageParsed(func(pageNum, totalPages int) {
-				fmt.Printf("  Processing page %d/%d\n", pageNum, totalPages)
+				fmt.Printf("  Page %d/%d\n", pageNum, totalPages)
 			}),
 			pdf2md.WithOnFontParsed(func(fontName string) {
-				fmt.Printf("  Found font: %s\n", fontName)
+				fmt.Printf("  Font: %s\n", fontName)
 			}),
 		)
 		converterOpts = append(converterOpts, convert.WithPDFOptions(pdfOpts...))
 
-		// Add DOCX-specific verbose callbacks
+		// DOCX-specific debug callbacks
 		docxOpts = append(docxOpts,
 			docx2md.WithOnDocumentParsed(func() {
 				fmt.Println("  Document parsed")
 			}),
 			docx2md.WithOnStylesParsed(func(count int) {
-				fmt.Printf("  Found %d styles\n", count)
+				fmt.Printf("  Styles: %d\n", count)
 			}),
 		)
 		converterOpts = append(converterOpts, convert.WithDOCXOptions(docxOpts...))
@@ -160,7 +166,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		if *verbose {
+		if *debug {
 			fmt.Printf("Converting %s to %s...\n", inputPath, *outputFile)
 		}
 
