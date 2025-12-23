@@ -10,6 +10,7 @@ bin/
 vendor/
 private/
 .idea
+.gocache
 .idea/*
 .vs
 .env
