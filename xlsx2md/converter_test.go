@@ -84,10 +84,16 @@ func TestConvertXLSX(t *testing.T) {
 	if !strings.Contains(markdown, "## Sheet1") {
 		t.Errorf("Expected sheet heading, got: %s", markdown)
 	}
-	if !strings.Contains(markdown, "| Name | Value |") {
-		t.Errorf("Expected header row, got: %s", markdown)
+	if !strings.Contains(markdown, "### Range: Sheet1!A1:B2") {
+		t.Errorf("Expected range heading, got: %s", markdown)
 	}
-	if !strings.Contains(markdown, "| Alice | 42 |") {
+	if !strings.Contains(markdown, "| Row | A | B |") {
+		t.Errorf("Expected row/column header row, got: %s", markdown)
+	}
+	if !strings.Contains(markdown, "| 1 | Name | Value |") {
+		t.Errorf("Expected header data row, got: %s", markdown)
+	}
+	if !strings.Contains(markdown, "| 2 | Alice | 42 |") {
 		t.Errorf("Expected data row, got: %s", markdown)
 	}
 }

@@ -23,8 +23,14 @@ type Options struct {
 	// SheetSeparator is inserted between sheets
 	SheetSeparator string
 
-	// SkipEmptyRows removes rows with no cell values (excluding header)
+	// SkipEmptyRows removes rows with no cell values
 	SkipEmptyRows bool
+
+	// IncludeHidden controls whether hidden rows/columns are emitted
+	IncludeHidden bool
+
+	// MarkHidden appends a marker to hidden row/column labels
+	MarkHidden bool
 
 	// OnSheetParsed is called when a sheet is parsed
 	OnSheetParsed func(name string, rows, cols int)
@@ -39,6 +45,8 @@ func DefaultOptions() *Options {
 		IncludeSheetNames: true,
 		SheetSeparator:    "\n\n",
 		SkipEmptyRows:     true,
+		IncludeHidden:     true,
+		MarkHidden:        true,
 	}
 }
 
@@ -60,6 +68,20 @@ func WithSheetSeparator(separator string) Option {
 func WithSkipEmptyRows(skip bool) Option {
 	return func(o *Options) {
 		o.SkipEmptyRows = skip
+	}
+}
+
+// WithIncludeHidden sets whether to include hidden rows/columns
+func WithIncludeHidden(include bool) Option {
+	return func(o *Options) {
+		o.IncludeHidden = include
+	}
+}
+
+// WithMarkHidden sets whether to mark hidden rows/columns
+func WithMarkHidden(mark bool) Option {
+	return func(o *Options) {
+		o.MarkHidden = mark
 	}
 }
 
@@ -114,56 +136,45 @@ func (c *Converter) Convert(data []byte) (string, error) {
 			output.WriteString(fmt.Sprintf("## %s\n\n", sheet.Name))
 		}
 
-		if sheet.MaxRow == 0 || sheet.MaxCol == 0 || sheet.MinCol == 0 {
+		if sheet.MaxRow == 0 || sheet.MaxCol == 0 {
 			continue
 		}
 
 		if c.options.OnSheetParsed != nil {
-			c.options.OnSheetParsed(sheet.Name, sheet.MaxRow, sheet.MaxCol-sheet.MinCol+1)
+			outputCols := sheet.MaxCol
+			if sheet.MinCol > 0 {
+				outputCols = sheet.MaxCol - sheet.MinCol + 1
+			}
+			c.options.OnSheetParsed(sheet.Name, sheet.MaxRow, outputCols)
 		}
 
-		blocks := rowBlocks(sheet)
+		blocks := buildRangeBlocks(sheet)
 		for blockIndex, block := range blocks {
 			if blockIndex > 0 {
 				output.WriteString("\n")
 			}
 
-			headerRow := headerRowWithMostData(sheet, block)
-			if headerRow == 0 {
-				continue
-			}
-
-			blockMinCol, blockMaxCol := blockColumnRange(sheet, block)
-			if blockMinCol == 0 || blockMaxCol == 0 {
-				continue
-			}
-
-			if block.MaxRow == block.MinRow && rowDataCount(sheet, block.MinRow) < 2 {
-				text := rowText(sheet, block.MinRow)
-				if text != "" {
-					output.WriteString(text)
-					output.WriteString("\n")
-				}
-				continue
-			}
-
-			for row := block.MinRow; row < headerRow; row++ {
-				text := rowText(sheet, row)
-				if text == "" {
-					continue
-				}
-				output.WriteString(text)
+			blockTitle := formatBlockTitle(sheet.Name, block)
+			if blockTitle != "" {
+				output.WriteString(blockTitle)
 				output.WriteString("\n")
 			}
 
-			headerValues := rowValues(sheet, headerRow, blockMinCol, blockMaxCol)
-			writeMarkdownRow(&output, headerValues)
-			writeSeparatorRow(&output, len(headerValues))
+			cols := visibleColumns(block, sheet, c.options.IncludeHidden)
+			rows := visibleRows(block, sheet, c.options.IncludeHidden, cols, c.options.SkipEmptyRows)
+			if len(cols) == 0 || len(rows) == 0 {
+				continue
+			}
 
-			for row := headerRow + 1; row <= block.MaxRow; row++ {
-				values := rowValues(sheet, row, blockMinCol, blockMaxCol)
-				if c.options.SkipEmptyRows && isRowEmpty(values) {
-					continue
+			headers := append([]string{"Row"}, columnLabels(cols, sheet, c.options.MarkHidden)...)
+			writeMarkdownRow(&output, headers)
+			writeSeparatorRow(&output, len(headers))
+
+			for _, row := range rows {
+				rowLabel := formatRowLabel(row, sheet, c.options.MarkHidden)
+				values := []string{rowLabel}
+				for _, col := range cols {
+					values = append(values, cellDisplay(sheet, row, col))
 				}
 				writeMarkdownRow(&output, values)
 			}
@@ -173,70 +184,142 @@ func (c *Converter) Convert(data []byte) (string, error) {
 	return output.String(), nil
 }
 
-type rowBlock struct {
-	MinRow int
-	MaxRow int
+type rangeBlock struct {
+	Kind     string
+	Name     string
+	StartRow int
+	StartCol int
+	EndRow   int
+	EndCol   int
 }
 
-func rowBlocks(sheet *xlsx.Sheet) []rowBlock {
-	var blocks []rowBlock
-	inBlock := false
-	startRow := 0
+func buildRangeBlocks(sheet *xlsx.Sheet) []rangeBlock {
+	var blocks []rangeBlock
+	for _, table := range sheet.Tables {
+		blocks = append(blocks, rangeBlock{
+			Kind:     "table",
+			Name:     table.Name,
+			StartRow: table.StartRow,
+			StartCol: table.StartCol,
+			EndRow:   table.EndRow,
+			EndCol:   table.EndCol,
+		})
+	}
 
+	tableRows := map[int]bool{}
+	for _, table := range sheet.Tables {
+		for row := table.StartRow; row <= table.EndRow; row++ {
+			tableRows[row] = true
+		}
+	}
+
+	var inBlock bool
+	startRow := 0
 	for row := 1; row <= sheet.MaxRow; row++ {
-		if rowHasData(sheet, row) {
-			if !inBlock {
-				inBlock = true
-				startRow = row
+		if tableRows[row] || !rowHasAnyData(sheet, row) {
+			if inBlock {
+				minCol, maxCol := rangeColumnBounds(sheet, startRow, row-1)
+				if minCol != 0 && maxCol != 0 {
+					blocks = append(blocks, rangeBlock{
+						Kind:     "range",
+						StartRow: startRow,
+						StartCol: minCol,
+						EndRow:   row - 1,
+						EndCol:   maxCol,
+					})
+				}
+				inBlock = false
 			}
 			continue
 		}
 
-		if inBlock {
-			blocks = append(blocks, rowBlock{MinRow: startRow, MaxRow: row - 1})
-			inBlock = false
+		if !inBlock {
+			startRow = row
+			inBlock = true
 		}
 	}
 
 	if inBlock {
-		blocks = append(blocks, rowBlock{MinRow: startRow, MaxRow: sheet.MaxRow})
+		minCol, maxCol := rangeColumnBounds(sheet, startRow, sheet.MaxRow)
+		if minCol != 0 && maxCol != 0 {
+			blocks = append(blocks, rangeBlock{
+				Kind:     "range",
+				StartRow: startRow,
+				StartCol: minCol,
+				EndRow:   sheet.MaxRow,
+				EndCol:   maxCol,
+			})
+		}
 	}
+
+	sort.Slice(blocks, func(i, j int) bool {
+		if blocks[i].StartRow != blocks[j].StartRow {
+			return blocks[i].StartRow < blocks[j].StartRow
+		}
+		return blocks[i].StartCol < blocks[j].StartCol
+	})
 
 	return blocks
 }
 
-func rowHasData(sheet *xlsx.Sheet, row int) bool {
-	return rowDataCount(sheet, row) > 0
-}
-
-func rowDataCount(sheet *xlsx.Sheet, row int) int {
-	if sheet.Cells[row] == nil {
-		return 0
+func formatBlockTitle(sheetName string, block rangeBlock) string {
+	rangeRef := formatRangeRef(block.StartRow, block.StartCol, block.EndRow, block.EndCol)
+	if block.Kind == "table" {
+		if block.Name != "" {
+			return fmt.Sprintf("### Table: %s!%s (%s)", sheetName, rangeRef, block.Name)
+		}
+		return fmt.Sprintf("### Table: %s!%s", sheetName, rangeRef)
 	}
-	return len(sheet.Cells[row])
+	return fmt.Sprintf("### Range: %s!%s", sheetName, rangeRef)
 }
 
-func headerRowWithMostData(sheet *xlsx.Sheet, block rowBlock) int {
-	bestRow := 0
-	bestCount := 0
-	for row := block.MinRow; row <= block.MaxRow; row++ {
-		count := rowDataCount(sheet, row)
-		if count == 0 {
+func visibleColumns(block rangeBlock, sheet *xlsx.Sheet, includeHidden bool) []int {
+	var cols []int
+	for col := block.StartCol; col <= block.EndCol; col++ {
+		if !includeHidden && sheet.HiddenCols[col] {
 			continue
 		}
-		if count > bestCount || (count == bestCount && (bestRow == 0 || row < bestRow)) {
-			bestRow = row
-			bestCount = count
-		}
+		cols = append(cols, col)
 	}
-	return bestRow
+	return cols
 }
 
-func blockColumnRange(sheet *xlsx.Sheet, block rowBlock) (int, int) {
+func visibleRows(block rangeBlock, sheet *xlsx.Sheet, includeHidden bool, cols []int, skipEmpty bool) []int {
+	var rows []int
+	for row := block.StartRow; row <= block.EndRow; row++ {
+		if !includeHidden && sheet.HiddenRows[row] {
+			continue
+		}
+		if skipEmpty && rowIsEmpty(sheet, row, cols) {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func rowHasAnyData(sheet *xlsx.Sheet, row int) bool {
+	if sheet.Cells[row] == nil {
+		return false
+	}
+	for _, cell := range sheet.Cells[row] {
+		if strings.TrimSpace(cell.Value) != "" || cell.HasFormula {
+			return true
+		}
+	}
+	return false
+}
+
+func rangeColumnBounds(sheet *xlsx.Sheet, startRow int, endRow int) (int, int) {
 	minCol := 0
 	maxCol := 0
-	for row := block.MinRow; row <= block.MaxRow; row++ {
-		for col := range sheet.Cells[row] {
+	for row := startRow; row <= endRow; row++ {
+		for col, cell := range sheet.Cells[row] {
+			if strings.TrimSpace(cell.Value) == "" && !cell.HasFormula {
+				if !cell.IsMerged {
+					continue
+				}
+			}
 			if minCol == 0 || col < minCol {
 				minCol = col
 			}
@@ -245,47 +328,101 @@ func blockColumnRange(sheet *xlsx.Sheet, block rowBlock) (int, int) {
 			}
 		}
 	}
+	for _, merge := range sheet.Merges {
+		if merge.EndRow < startRow || merge.StartRow > endRow {
+			continue
+		}
+		if minCol == 0 || merge.StartCol < minCol {
+			minCol = merge.StartCol
+		}
+		if merge.EndCol > maxCol {
+			maxCol = merge.EndCol
+		}
+	}
 	return minCol, maxCol
 }
 
-func rowValues(sheet *xlsx.Sheet, row int, minCol int, maxCol int) []string {
-	values := make([]string, maxCol-minCol+1)
-	for col := minCol; col <= maxCol; col++ {
-		if sheet.Cells[row] != nil {
-			values[col-minCol] = sanitizeCell(sheet.Cells[row][col])
-		}
-	}
-	return values
-}
-
-func rowText(sheet *xlsx.Sheet, row int) string {
-	if sheet.Cells[row] == nil {
-		return ""
-	}
-	var cols []int
-	for col := range sheet.Cells[row] {
-		cols = append(cols, col)
-	}
-	sort.Ints(cols)
-
-	var parts []string
+func rowIsEmpty(sheet *xlsx.Sheet, row int, cols []int) bool {
 	for _, col := range cols {
-		value := sanitizeCell(sheet.Cells[row][col])
-		if value == "" {
-			continue
-		}
-		parts = append(parts, value)
-	}
-	return strings.Join(parts, " ")
-}
-
-func isRowEmpty(values []string) bool {
-	for _, v := range values {
-		if v != "" {
+		cell := sheet.Cells[row][col]
+		if strings.TrimSpace(cell.Value) != "" || cell.HasFormula || cell.IsMerged {
 			return false
 		}
 	}
 	return true
+}
+
+func columnLabels(cols []int, sheet *xlsx.Sheet, markHidden bool) []string {
+	labels := make([]string, 0, len(cols))
+	for _, col := range cols {
+		label := columnIndexToLetters(col)
+		if markHidden && sheet.HiddenCols[col] {
+			label = fmt.Sprintf("%s [hidden]", label)
+		}
+		labels = append(labels, label)
+	}
+	return labels
+}
+
+func formatRowLabel(row int, sheet *xlsx.Sheet, markHidden bool) string {
+	label := fmt.Sprintf("%d", row)
+	if markHidden && sheet.HiddenRows[row] {
+		label = fmt.Sprintf("%s [hidden]", label)
+	}
+	return label
+}
+
+func cellDisplay(sheet *xlsx.Sheet, row int, col int) string {
+	cell, ok := sheet.Cells[row][col]
+	if !ok {
+		return ""
+	}
+
+	value := strings.TrimSpace(cell.Value)
+	if cell.HasFormula {
+		formula := strings.TrimSpace(cell.Formula)
+		if formula != "" {
+			formula = "=" + formula
+			if value != "" {
+				value = fmt.Sprintf("%s (%s)", value, formula)
+			} else {
+				value = formula
+			}
+		}
+	}
+
+	if value == "" && cell.IsMerged && !cell.IsMergeTopLeft {
+		value = "[merged]"
+	}
+
+	return sanitizeCell(value)
+}
+
+func formatRangeRef(startRow int, startCol int, endRow int, endCol int) string {
+	start := fmt.Sprintf("%s%d", columnIndexToLetters(startCol), startRow)
+	end := fmt.Sprintf("%s%d", columnIndexToLetters(endCol), endRow)
+	if start == end {
+		return start
+	}
+	return fmt.Sprintf("%s:%s", start, end)
+}
+
+func columnIndexToLetters(col int) string {
+	if col <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	for col > 0 {
+		col--
+		b.WriteByte(byte('A' + (col % 26)))
+		col /= 26
+	}
+
+	runes := []rune(b.String())
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
 }
 
 func writeMarkdownRow(output *strings.Builder, values []string) {

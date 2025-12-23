@@ -321,10 +321,11 @@ The `xlsx2md` package converts Microsoft Excel spreadsheets to Markdown tables.
 
 #### Features
 
-- Converts each worksheet to a Markdown table
-- Uses the first populated row as the header row
-- Supports shared strings and inline strings
-- Formats Excel date serials using sheet styles
+- Converts each worksheet to structured Markdown with range/table headings
+- Emits explicit row/column indices for LLM-friendly references
+- Extracts table ranges from sheet table definitions when present
+- Supports shared strings, inline strings, formulas, and error values
+- Formats Excel date serials and common numeric formats using sheet styles
 
 #### Simple Usage
 
@@ -341,7 +342,13 @@ err := converter.ConvertFileToFile("input.xlsx", "output.md")
 |--------|-------------|---------|
 | `WithIncludeSheetNames(bool)` | Add sheet heading before each table | true |
 | `WithSheetSeparator(string)` | Separator between sheets | "\n\n" |
-| `WithSkipEmptyRows(bool)` | Skip empty rows after header | true |
+| `WithSkipEmptyRows(bool)` | Skip empty rows | true |
+| `WithIncludeHidden(bool)` | Include hidden rows/columns | true |
+| `WithMarkHidden(bool)` | Mark hidden rows/columns | true |
+
+#### Limitations
+
+- Encrypted XLSX files are not supported
 
 ---
 
