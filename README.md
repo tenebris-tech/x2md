@@ -24,6 +24,7 @@ go build
 # Convert a file (outputs to same name with .md extension)
 x2md document.pdf
 x2md document.docx
+x2md document.xlsx
 
 # Specify output file
 x2md -output out.md document.pdf
@@ -99,9 +100,10 @@ Pass options to the underlying format converters:
 
 ```go
 import (
-    "github.com/tenebris-tech/x2md/convert"
-    "github.com/tenebris-tech/x2md/pdf2md"
-    "github.com/tenebris-tech/x2md/docx2md"
+	"github.com/tenebris-tech/x2md/convert"
+	"github.com/tenebris-tech/x2md/pdf2md"
+	"github.com/tenebris-tech/x2md/docx2md"
+	"github.com/tenebris-tech/x2md/xlsx2md"
 )
 
 c := convert.New(
@@ -110,9 +112,12 @@ c := convert.New(
         pdf2md.WithScanMode(false),
         pdf2md.WithStrip(pdf2md.HeadersFooters, pdf2md.BlankPages),
     ),
-    convert.WithDOCXOptions(
-        docx2md.WithPreserveImages(false),
-    ),
+	convert.WithDOCXOptions(
+		docx2md.WithPreserveImages(false),
+	),
+	convert.WithXLSXOptions(
+		xlsx2md.WithIncludeSheetNames(false),
+	),
 )
 ```
 
@@ -152,6 +157,7 @@ x2md supports multiple document formats. Each format has its own package that ca
 
 - **PDF** - Text-based and scanned PDF documents (`pdf2md`)
 - **DOCX** - Microsoft Word documents (`docx2md`)
+- **XLSX** - Microsoft Excel spreadsheets (`xlsx2md`)
 
 ---
 
@@ -306,6 +312,36 @@ input.docx → input.md + input_images/image_001.png, image_002.jpg, ...
 - Complex nested tables may not render perfectly
 - Advanced formatting (text boxes, shapes, SmartArt) is ignored
 - Comments and tracked changes are not included
+
+---
+
+### XLSX
+
+The `xlsx2md` package converts Microsoft Excel spreadsheets to Markdown tables.
+
+#### Features
+
+- Converts each worksheet to a Markdown table
+- Uses the first populated row as the header row
+- Supports shared strings and inline strings
+- Formats Excel date serials using sheet styles
+
+#### Simple Usage
+
+```go
+import "github.com/tenebris-tech/x2md/xlsx2md"
+
+converter := xlsx2md.New()
+err := converter.ConvertFileToFile("input.xlsx", "output.md")
+```
+
+#### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `WithIncludeSheetNames(bool)` | Add sheet heading before each table | true |
+| `WithSheetSeparator(string)` | Separator between sheets | "\n\n" |
+| `WithSkipEmptyRows(bool)` | Skip empty rows after header | true |
 
 ---
 

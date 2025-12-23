@@ -1,5 +1,5 @@
 // Package convert provides a unified API for converting documents to Markdown.
-// It wraps the pdf2md and docx2md packages and adds support for batch processing,
+// It wraps the pdf2md, docx2md, and xlsx2md packages and adds support for batch processing,
 // recursive directory traversal, and output directory management.
 package convert
 
@@ -11,10 +11,11 @@ import (
 
 	"github.com/tenebris-tech/x2md/docx2md"
 	"github.com/tenebris-tech/x2md/pdf2md"
+	"github.com/tenebris-tech/x2md/xlsx2md"
 )
 
 // DefaultExtensions lists the file extensions supported by default
-var DefaultExtensions = []string{".pdf", ".docx"}
+var DefaultExtensions = []string{".pdf", ".docx", ".xlsx"}
 
 // Converter handles document to Markdown conversion
 type Converter struct {
@@ -29,7 +30,7 @@ type Options struct {
 	// Recursion enables recursive directory traversal
 	Recursion bool
 
-	// Extensions lists file extensions to convert (default: .pdf, .docx)
+	// Extensions lists file extensions to convert (default: .pdf, .docx, .xlsx)
 	Extensions []string
 
 	// SkipExisting skips files where .md already exists (default: true)
@@ -47,6 +48,9 @@ type Options struct {
 
 	// DOCXOptions are passed to the DOCX converter
 	DOCXOptions []docx2md.Option
+
+	// XLSXOptions are passed to the XLSX converter
+	XLSXOptions []xlsx2md.Option
 
 	// OnFileStart is called when starting to convert a file
 	OnFileStart func(path string)
@@ -133,6 +137,13 @@ func WithPDFOptions(opts ...pdf2md.Option) Option {
 func WithDOCXOptions(opts ...docx2md.Option) Option {
 	return func(o *Options) {
 		o.DOCXOptions = opts
+	}
+}
+
+// WithXLSXOptions sets options to pass to the XLSX converter
+func WithXLSXOptions(opts ...xlsx2md.Option) Option {
+	return func(o *Options) {
+		o.XLSXOptions = opts
 	}
 }
 
@@ -298,6 +309,8 @@ func (c *Converter) processFile(path string, result *Result) {
 		convErr = c.convertPDF(realPath, outputPath)
 	case ".docx":
 		convErr = c.convertDOCX(realPath, outputPath)
+	case ".xlsx":
+		convErr = c.convertXLSX(realPath, outputPath)
 	}
 
 	// Notify completion
@@ -372,5 +385,11 @@ func (c *Converter) convertPDF(inputPath, outputPath string) error {
 // convertDOCX converts a DOCX file to Markdown
 func (c *Converter) convertDOCX(inputPath, outputPath string) error {
 	converter := docx2md.New(c.options.DOCXOptions...)
+	return converter.ConvertFileToFile(inputPath, outputPath)
+}
+
+// convertXLSX converts an XLSX file to Markdown
+func (c *Converter) convertXLSX(inputPath, outputPath string) error {
+	converter := xlsx2md.New(c.options.XLSXOptions...)
 	return converter.ConvertFileToFile(inputPath, outputPath)
 }

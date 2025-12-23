@@ -8,6 +8,7 @@ import (
 
 	"github.com/tenebris-tech/x2md/docx2md"
 	"github.com/tenebris-tech/x2md/pdf2md"
+	"github.com/tenebris-tech/x2md/xlsx2md"
 )
 
 // Integration tests for x2md converter
@@ -150,6 +151,31 @@ func TestDOCXConversion(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestXLSXConversion(t *testing.T) {
+	file := "private/ISO/ControlEvidence/Evidence/DCF153-Cond_Cont_Self/Evidence Library (manual evidences only)/Internal-Audit/20241212EPSISO27001InternalAudit-FinalReport.xlsx.xlsx"
+	if _, err := os.Stat(file); os.IsNotExist(err) {
+		t.Skipf("Test file not available: %s", file)
+	}
+
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+
+	converter := xlsx2md.New()
+	result, err := converter.Convert(data)
+	if err != nil {
+		t.Fatalf("Conversion failed: %v", err)
+	}
+
+	if len(strings.TrimSpace(result)) == 0 {
+		t.Error("Expected non-empty output")
+	}
+	if !strings.Contains(result, "|") {
+		t.Error("Expected markdown table syntax in output")
 	}
 }
 

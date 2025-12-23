@@ -9,6 +9,7 @@ import (
 
 	"github.com/tenebris-tech/x2md/docx2md"
 	"github.com/tenebris-tech/x2md/pdf2md"
+	"github.com/tenebris-tech/x2md/xlsx2md"
 )
 
 // createTestDocx creates a minimal valid DOCX for testing
@@ -52,8 +53,8 @@ func TestDefaultOptions(t *testing.T) {
 	if !opts.SkipExisting {
 		t.Error("Expected SkipExisting to be true by default")
 	}
-	if len(opts.Extensions) != 2 {
-		t.Errorf("Expected 2 default extensions, got %d", len(opts.Extensions))
+	if len(opts.Extensions) != 3 {
+		t.Errorf("Expected 3 default extensions, got %d", len(opts.Extensions))
 	}
 	if opts.OutputDirectory != "" {
 		t.Error("Expected OutputDirectory to be empty by default")
@@ -111,6 +112,13 @@ func TestWithDOCXOptions(t *testing.T) {
 	c := New(WithDOCXOptions(docx2md.WithPreserveImages(false)))
 	if len(c.options.DOCXOptions) != 1 {
 		t.Errorf("Expected 1 DOCX option, got %d", len(c.options.DOCXOptions))
+	}
+}
+
+func TestWithXLSXOptions(t *testing.T) {
+	c := New(WithXLSXOptions(xlsx2md.WithIncludeSheetNames(false)))
+	if len(c.options.XLSXOptions) != 1 {
+		t.Errorf("Expected 1 XLSX option, got %d", len(c.options.XLSXOptions))
 	}
 }
 
