@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-x2md is a pure Go application that converts multiple file types to Markdown. Currently supports PDF and DOCX formats.
+x2md is a pure Go application that converts multiple file types to Markdown. Currently supports PDF, DOCX, and XLSX formats.
 
 **Status**: Unreleased - do not retain legacy code or implement backward compatibility
 
@@ -43,6 +43,9 @@ x2md/
     ├── converter.go        # Main API with functional options
     ├── docx/               # DOCX parsing (ZIP/XML)
     └── transform/          # Transformation pipeline
+└── xlsx2md/                # XLSX conversion package
+    ├── converter.go        # Main API with functional options
+    └── xlsx/               # XLSX parsing (ZIP/XML)
 ```
 
 ---

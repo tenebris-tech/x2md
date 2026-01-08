@@ -8,6 +8,7 @@ import (
 	"github.com/tenebris-tech/x2md/convert"
 	"github.com/tenebris-tech/x2md/docx2md"
 	"github.com/tenebris-tech/x2md/pdf2md"
+	"github.com/tenebris-tech/x2md/xlsx2md"
 )
 
 func main() {
@@ -98,6 +99,9 @@ func main() {
 		docxOpts = append(docxOpts, docx2md.WithPreserveImages(false))
 	}
 
+	// Build XLSX options
+	var xlsxOpts []xlsx2md.Option
+
 	// Build converter options
 	var converterOpts []convert.Option
 	converterOpts = append(converterOpts, convert.WithRecursion(*recursive))
@@ -112,6 +116,9 @@ func main() {
 	}
 	if len(docxOpts) > 0 {
 		converterOpts = append(converterOpts, convert.WithDOCXOptions(docxOpts...))
+	}
+	if len(xlsxOpts) > 0 {
+		converterOpts = append(converterOpts, convert.WithXLSXOptions(xlsxOpts...))
 	}
 
 	// Add verbose callbacks (-v: one line per file)
@@ -151,6 +158,13 @@ func main() {
 			}),
 		)
 		converterOpts = append(converterOpts, convert.WithDOCXOptions(docxOpts...))
+
+		xlsxOpts = append(xlsxOpts,
+			xlsx2md.WithOnSheetParsed(func(name string, rows, cols int) {
+				fmt.Printf("  Sheet: %s (%d x %d)\n", name, rows, cols)
+			}),
+		)
+		converterOpts = append(converterOpts, convert.WithXLSXOptions(xlsxOpts...))
 	}
 
 	// Handle single file with explicit output path
@@ -170,7 +184,7 @@ func main() {
 			fmt.Printf("Converting %s to %s...\n", inputPath, *outputFile)
 		}
 
-		err = convertSingleFile(inputPath, *outputFile, pdfOpts, docxOpts)
+		err = convertSingleFile(inputPath, *outputFile, pdfOpts, docxOpts, xlsxOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -202,15 +216,15 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println("Usage: x2md [options] <input.pdf|input.docx|directory>")
+	fmt.Println("Usage: x2md [options] <input.pdf|input.docx|input.xlsx|directory>")
 	fmt.Println()
-	fmt.Println("Converts PDF or DOCX files to Markdown.")
+	fmt.Println("Converts PDF, DOCX, or XLSX files to Markdown.")
 	fmt.Println()
 	fmt.Println("Options:")
 	flag.PrintDefaults()
 }
 
-func convertSingleFile(inputPath, outputPath string, pdfOpts []pdf2md.Option, docxOpts []docx2md.Option) error {
+func convertSingleFile(inputPath, outputPath string, pdfOpts []pdf2md.Option, docxOpts []docx2md.Option, xlsxOpts []xlsx2md.Option) error {
 	ext := getExtension(inputPath)
 
 	switch ext {
@@ -220,8 +234,11 @@ func convertSingleFile(inputPath, outputPath string, pdfOpts []pdf2md.Option, do
 	case ".docx":
 		converter := docx2md.New(docxOpts...)
 		return converter.ConvertFileToFile(inputPath, outputPath)
+	case ".xlsx":
+		converter := xlsx2md.New(xlsxOpts...)
+		return converter.ConvertFileToFile(inputPath, outputPath)
 	default:
-		return fmt.Errorf("unsupported file type: %s (supported: .pdf, .docx)", ext)
+		return fmt.Errorf("unsupported file type: %s (supported: .pdf, .docx, .xlsx)", ext)
 	}
 }
 
