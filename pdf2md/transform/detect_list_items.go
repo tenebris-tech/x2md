@@ -85,9 +85,6 @@ func (d *DetectListItems) Transform(result *models.ParseResult) *models.ParseRes
 					newItems = append(newItems, lineItem)
 				} else {
 					// Replace bullet with dash
-					lineItem.Annotation = models.RemovedAnnotation
-					newItems = append(newItems, lineItem)
-
 					// Create new item with dash
 					newWords := make([]*models.Word, len(lineItem.Words))
 					for i, w := range lineItem.Words {
