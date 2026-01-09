@@ -34,14 +34,16 @@ type Font struct {
 type TextExtractor struct {
 	parser    *Parser
 	fonts     map[string]*Font
+	xobjects  map[string]*Object // Form XObjects for current page
 	pageIndex int
 }
 
 // NewTextExtractor creates a new text extractor
 func NewTextExtractor(parser *Parser) *TextExtractor {
 	return &TextExtractor{
-		parser: parser,
-		fonts:  make(map[string]*Font),
+		parser:   parser,
+		fonts:    make(map[string]*Font),
+		xobjects: make(map[string]*Object),
 	}
 }
 
@@ -58,6 +60,9 @@ func (e *TextExtractor) ExtractPage(pageIndex int) ([]TextItem, error) {
 	if err := e.loadPageFonts(page); err != nil {
 		return nil, fmt.Errorf("loading fonts: %w", err)
 	}
+
+	// Load XObjects for this page (Form XObjects may contain text)
+	e.loadPageXObjects(page)
 
 	// Get page content stream(s)
 	content, err := e.getPageContent(page)
@@ -203,6 +208,110 @@ func (e *TextExtractor) getResources(page *Object) map[string]interface{} {
 	return nil
 }
 
+// loadPageXObjects loads XObjects from page resources
+// Form XObjects may contain text that needs to be extracted
+func (e *TextExtractor) loadPageXObjects(page *Object) {
+	// Clear previous page's XObjects
+	e.xobjects = make(map[string]*Object)
+
+	resources := e.getResources(page)
+	if resources == nil {
+		return
+	}
+
+	xobjects, ok := resources["XObject"]
+	if !ok {
+		return
+	}
+
+	var xobjectDict map[string]interface{}
+	switch x := xobjects.(type) {
+	case map[string]interface{}:
+		xobjectDict = x
+	case *Reference:
+		xobj, err := e.parser.GetObject(x.ObjectNum)
+		if err != nil {
+			return
+		}
+		xobjectDict = xobj.Dict
+	default:
+		return
+	}
+
+	for name, ref := range xobjectDict {
+		if r, ok := ref.(*Reference); ok {
+			obj, err := e.parser.GetObject(r.ObjectNum)
+			if err != nil {
+				continue
+			}
+
+			// Check if it's a Form XObject
+			if subtype, ok := obj.Dict["Subtype"].(string); ok && subtype == "/Form" {
+				e.xobjects[name] = obj
+
+				// Load fonts from Form XObject resources
+				e.loadFormXObjectFonts(obj)
+			}
+		}
+	}
+}
+
+// loadFormXObjectFonts loads fonts from a Form XObject's resources
+func (e *TextExtractor) loadFormXObjectFonts(formObj *Object) {
+	resources, ok := formObj.Dict["Resources"]
+	if !ok {
+		return
+	}
+
+	var resDict map[string]interface{}
+	switch r := resources.(type) {
+	case map[string]interface{}:
+		resDict = r
+	case *Reference:
+		resObj, err := e.parser.GetObject(r.ObjectNum)
+		if err != nil {
+			return
+		}
+		resDict = resObj.Dict
+	default:
+		return
+	}
+
+	fontsDict, ok := resDict["Font"]
+	if !ok {
+		return
+	}
+
+	var fonts map[string]interface{}
+	switch f := fontsDict.(type) {
+	case map[string]interface{}:
+		fonts = f
+	case *Reference:
+		fontObj, err := e.parser.GetObject(f.ObjectNum)
+		if err != nil {
+			return
+		}
+		fonts = fontObj.Dict
+	default:
+		return
+	}
+
+	for fontName, fontRef := range fonts {
+		if _, exists := e.fonts[fontName]; exists {
+			continue // Already loaded
+		}
+
+		if ref, ok := fontRef.(*Reference); ok {
+			fontObj, err := e.parser.GetObject(ref.ObjectNum)
+			if err != nil {
+				continue
+			}
+			font := e.parseFont(fontObj.Dict)
+			e.fonts[fontName] = font
+		}
+	}
+}
+
 // getPageContent gets the content stream(s) for a page
 func (e *TextExtractor) getPageContent(page *Object) ([]byte, error) {
 	contents, ok := page.Dict["Contents"]
@@ -317,6 +426,42 @@ func (e *TextExtractor) parseContentStream(content []byte, mediaBox [4]float64) 
 	// Initialize graphics state
 	gs := &GraphicsState{
 		CTM:          [6]float64{1, 0, 0, 1, 0, 0},
+		TextMatrix:   [6]float64{1, 0, 0, 1, 0, 0},
+		LineMatrix:   [6]float64{1, 0, 0, 1, 0, 0},
+		HorizScaling: 100,
+	}
+
+	gsStack := []*GraphicsState{}
+
+	// Tokenize and parse
+	tokens := e.tokenize(content)
+	operandStack := []interface{}{}
+
+	for _, token := range tokens {
+		if e.isOperator(token) {
+			items = e.executeOperator(token, operandStack, gs, &gsStack, items, mediaBox)
+			operandStack = []interface{}{}
+		} else {
+			operandStack = append(operandStack, e.parseToken(token))
+		}
+	}
+
+	return items, nil
+}
+
+// parseFormXObject parses a Form XObject's content stream
+// It inherits the CTM from the parent graphics state
+func (e *TextExtractor) parseFormXObject(content []byte, mediaBox [4]float64, parentGS *GraphicsState) (items []TextItem, err error) {
+	// Recover from panics
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("form xobject parsing panic: %v", r)
+		}
+	}()
+
+	// Initialize graphics state, inheriting CTM from parent
+	gs := &GraphicsState{
+		CTM:          parentGS.CTM,
 		TextMatrix:   [6]float64{1, 0, 0, 1, 0, 0},
 		LineMatrix:   [6]float64{1, 0, 0, 1, 0, 0},
 		HorizScaling: 100,
@@ -745,6 +890,34 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 				item := e.showText(text, gs, mediaBox)
 				if item.Text != "" {
 					items = append(items, item)
+				}
+			}
+		}
+
+	case "Do":
+		// Paint XObject - if it's a Form XObject, extract text from it
+		if len(operands) >= 1 {
+			if xobjName, ok := operands[0].(string); ok {
+				xobjName = strings.TrimPrefix(xobjName, "/")
+				if formObj, exists := e.xobjects[xobjName]; exists {
+					// Get Form XObject content stream
+					stream, err := e.parser.DecodeStream(formObj)
+					if err == nil && len(stream) > 0 {
+						// Get Form XObject's BBox for coordinate transformation
+						formMediaBox := mediaBox
+						if bbox, ok := formObj.Dict["BBox"].([]interface{}); ok && len(bbox) >= 4 {
+							formMediaBox = [4]float64{
+								e.getFloat(bbox[0]),
+								e.getFloat(bbox[1]),
+								e.getFloat(bbox[2]),
+								e.getFloat(bbox[3]),
+							}
+						}
+
+						// Parse Form XObject content with current graphics state
+						formItems, _ := e.parseFormXObject(stream, formMediaBox, gs)
+						items = append(items, formItems...)
+					}
 				}
 			}
 		}
