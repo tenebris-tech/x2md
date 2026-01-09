@@ -928,7 +928,7 @@ func (e *TextExtractor) basicDecode(text string) string {
 		if b >= 32 && b <= 126 {
 			result.WriteByte(b)
 		} else if b >= 128 {
-			// Common PDFDocEncoding mappings
+			// Common PDFDocEncoding / MacRoman / WinAnsi mappings
 			switch b {
 			case 0x80:
 				result.WriteRune(0x2022) // bullet
@@ -946,6 +946,14 @@ func (e *TextExtractor) basicDecode(text string) string {
 				result.WriteRune(0x2013) // en dash
 			case 0x97:
 				result.WriteRune(0x2014) // em dash
+			case 0xA5:
+				result.WriteRune(0x2022) // bullet (MacRoman encoding)
+			case 0xA6:
+				result.WriteRune(0x00B6) // pilcrow/paragraph sign
+			case 0xA7:
+				result.WriteRune(0x00A7) // section sign
+			case 0xB7:
+				result.WriteRune(0x2022) // middle dot as bullet
 			default:
 				result.WriteByte(b)
 			}

@@ -294,7 +294,10 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 
 	// Check for encryption
 	if parser.IsEncrypted() {
-		return "", nil, fmt.Errorf("encrypted PDFs are not supported")
+		msg := "# Conversion Failed\n\n" +
+			"This PDF document is encrypted and requires a password to access its contents.\n\n" +
+			"The document could not be converted to Markdown.\n"
+		return msg, nil, nil
 	}
 
 	// Get page count
@@ -505,7 +508,20 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 		c.options.OnConversionComplete()
 	}
 
-	return output.String(), allImages, nil
+	// Check for empty output
+	markdown := output.String()
+	if strings.TrimSpace(markdown) == "" && len(allImages) == 0 {
+		msg := "# Conversion Failed\n\n" +
+			"No text content could be extracted from this PDF document.\n\n" +
+			"Possible reasons:\n" +
+			"- The PDF contains only scanned images without a text layer (OCR required)\n" +
+			"- The PDF uses an unsupported text encoding or font structure\n" +
+			"- The PDF content streams could not be parsed\n\n" +
+			fmt.Sprintf("Document info: %d pages\n", pageCount)
+		return msg, nil, nil
+	}
+
+	return markdown, allImages, nil
 }
 
 // isScannedPage determines if a page is likely a scanned image.
