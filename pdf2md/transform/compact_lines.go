@@ -360,7 +360,10 @@ func (c *CompactLines) detectTableRegions(items []*models.TextItem, mostUsedDist
 			}
 		}
 
-		if len(tableItems) >= 3 && c.isKnownTableHeader(tableItems, columns) {
+		// Validate items-to-columns ratio to avoid false positives on paragraph text
+		if !c.validateTableStructure(tableItems, columns, mostUsedDistance) {
+			// Skip - this looks like paragraph text, not a table
+		} else if len(tableItems) >= 3 && c.isKnownTableHeader(tableItems, columns) {
 			// Method 1a: Known table header pattern (like "Version Date Description")
 			// This handles continuation tables that span multiple pages
 			regions = append(regions, &tableRegion{
@@ -537,6 +540,7 @@ func (c *CompactLines) detectReferenceTable(items []*models.TextItem, mostUsedDi
 //  2. Finding rows with 2+ distinct column positions (well-spaced items)
 //  3. Looking for sequences of 3+ rows that share consistent column positions
 //  4. Verifying significant column width (not just two items on a line)
+//  5. Validating that rows have a reasonable item-to-column ratio (to reject paragraph text)
 //
 // Returns table regions for any detected aligned tables.
 func (c *CompactLines) detectAlignedTables(items []*models.TextItem, mostUsedDistance int, footerThreshold float64) []*tableRegion {
@@ -625,6 +629,26 @@ func (c *CompactLines) detectAlignedTables(items []*models.TextItem, mostUsedDis
 
 		runLength := endIdx - startIdx
 		if runLength >= 3 {
+			// Validate: check if this looks like paragraph text being falsely detected as a table
+			// In real tables, items per row roughly matches column count
+			// In paragraph text, many items are crammed into few "columns"
+			totalItems := 0
+			for i := startIdx; i < endIdx; i++ {
+				totalItems += len(rows[i].items)
+			}
+			avgItemsPerRow := float64(totalItems) / float64(runLength)
+			numColumns := len(rows[startIdx].columns)
+
+			// If average items per row is much higher than column count, it's likely paragraph text
+			// Real tables: ~1-2 items per column per row (maybe 3 for wrapped cells)
+			// Paragraphs: many items (words) squeezed into few "columns"
+			itemsToColumnsRatio := avgItemsPerRow / float64(numColumns)
+			if itemsToColumnsRatio > 2.5 {
+				// Too many items per column - this looks like paragraph text, not a table
+				startIdx = endIdx
+				continue
+			}
+
 			// Found a valid table sequence
 			// Merge column positions from all rows for best accuracy
 			var allColumns [][]float64
@@ -632,6 +656,22 @@ func (c *CompactLines) detectAlignedTables(items []*models.TextItem, mostUsedDis
 				allColumns = append(allColumns, rows[i].columns)
 			}
 			mergedColumns := c.mergeColumnPositions(allColumns)
+
+			// Collect all items in this region for multi-column layout check
+			var regionItems []*models.TextItem
+			for i := startIdx; i < endIdx; i++ {
+				regionItems = append(regionItems, rows[i].items...)
+			}
+
+			// Check for 2-column page layout being misdetected as table
+			yThreshold := float64(mostUsedDistance) / 2.0
+			if yThreshold < 5 {
+				yThreshold = 5
+			}
+			if len(mergedColumns) == 2 && c.looksLikeMultiColumnLayout(regionItems, mergedColumns, yThreshold) {
+				startIdx = endIdx
+				continue
+			}
 
 			// Calculate Y range
 			minY := rows[startIdx].y
@@ -941,6 +981,119 @@ func (c *CompactLines) detectMultiLineCells(items []*models.TextItem, columns []
 
 	// Consider it a table if at least 2 rows have multi-line cells
 	return multiLineCount >= 2
+}
+
+// validateTableStructure checks if detected table items have a reasonable structure.
+// Returns false if the structure looks more like paragraph text than a table.
+//
+// The key insight is that in real tables, items per row roughly matches column count.
+// In paragraph text incorrectly detected as a table, many items (words) get assigned
+// to few "columns", resulting in a high items-to-columns ratio.
+//
+// Additionally, we check for multi-column page layouts where items in the "second column"
+// are actually continuations of text from the first column (indicated by lowercase starts
+// or word fragments).
+func (c *CompactLines) validateTableStructure(items []*models.TextItem, columns []float64, mostUsedDistance int) bool {
+	if len(items) == 0 || len(columns) < 2 {
+		return false
+	}
+
+	// Group items by Y position into rows
+	yThreshold := float64(mostUsedDistance) / 2.0
+	if yThreshold < 5 {
+		yThreshold = 5
+	}
+
+	yGroups := make(map[int]int) // bucket -> item count
+	for _, item := range items {
+		if strings.TrimSpace(item.Text) == "" {
+			continue
+		}
+		yBucket := int(item.Y / yThreshold)
+		yGroups[yBucket]++
+	}
+
+	if len(yGroups) == 0 {
+		return false
+	}
+
+	// Calculate average items per row
+	totalItems := 0
+	for _, count := range yGroups {
+		totalItems += count
+	}
+	avgItemsPerRow := float64(totalItems) / float64(len(yGroups))
+
+	// Calculate items-to-columns ratio
+	// Real tables: ~1-2 items per column per row (maybe 3 for wrapped cells)
+	// Paragraphs: many items (words) per column
+	itemsToColumnsRatio := avgItemsPerRow / float64(len(columns))
+
+	// If average items per row is much higher than column count, it's likely paragraph text
+	if itemsToColumnsRatio > 2.5 {
+		return false
+	}
+
+	// Check for multi-column page layout (text continuation between columns)
+	// This detects PDFs with 2-column page layouts being misinterpreted as tables
+	if len(columns) == 2 && c.looksLikeMultiColumnLayout(items, columns, yThreshold) {
+		return false
+	}
+
+	return true
+}
+
+// looksLikeMultiColumnLayout checks if items look like a 2-column page layout
+// rather than a table. Signs of page layout:
+// - Second column items often start with lowercase (continuing a sentence)
+// - Second column items are word fragments (start mid-word)
+// - Items that are just punctuation like "-" (hyphenated words split across columns)
+func (c *CompactLines) looksLikeMultiColumnLayout(items []*models.TextItem, columns []float64, yThreshold float64) bool {
+	if len(columns) != 2 {
+		return false
+	}
+
+	// Column boundary: midpoint between the two columns
+	colBoundary := (columns[0] + columns[1]) / 2
+
+	// Count items in the right column that look like text fragments
+	fragmentCount := 0
+	rightColItemCount := 0
+
+	for _, item := range items {
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			continue
+		}
+
+		// Check if item is in the right column (second half of page)
+		if item.X >= colBoundary {
+			rightColItemCount++
+
+			// Check for fragment indicators:
+			// 1. Starts with lowercase letter (sentence continuation)
+			// 2. Starts with punctuation that attaches to previous word
+			// 3. Is just a hyphen (split hyphenated word)
+			firstRune := []rune(text)[0]
+			if firstRune >= 'a' && firstRune <= 'z' {
+				fragmentCount++
+			} else if firstRune == '-' || firstRune == '–' || firstRune == '.' ||
+				firstRune == ',' || firstRune == ';' || firstRune == ':' {
+				fragmentCount++
+			}
+		}
+	}
+
+	// If significant portion of right column items are fragments, it's a page layout
+	if rightColItemCount > 0 {
+		fragmentRatio := float64(fragmentCount) / float64(rightColItemCount)
+		// More than 30% fragments suggests page layout, not table
+		if fragmentRatio > 0.3 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // findTableRegion returns the table region containing the given Y coordinate
