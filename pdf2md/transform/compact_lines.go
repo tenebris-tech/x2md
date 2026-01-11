@@ -211,8 +211,26 @@ func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, mostUs
 	tableRegions := c.detectTableRegions(textItems, mostUsedDistance, footerThreshold)
 
 	if len(tableRegions) == 0 {
-		// No tables detected, use standard Y-based grouping
-		lines := c.groupByLine(items, mostUsedDistance)
+		// No tables detected - check for 2-column page layout
+		leftItems, rightItems, isMultiColumn := c.detectAndSplitMultiColumnLayout(textItems, mostUsedDistance)
+
+		if isMultiColumn {
+			// Process each column separately, then combine
+			leftLines := c.groupTextItemsByLine(leftItems, mostUsedDistance)
+			rightLines := c.groupTextItemsByLine(rightItems, mostUsedDistance)
+
+			result := make([]lineGroup, 0, len(leftLines)+len(rightLines))
+			for _, line := range leftLines {
+				result = append(result, lineGroup{items: line, isTableRow: false})
+			}
+			for _, line := range rightLines {
+				result = append(result, lineGroup{items: line, isTableRow: false})
+			}
+			return result
+		}
+
+		// Standard Y-based grouping for single-column layouts
+		lines := c.groupTextItemsByLine(textItems, mostUsedDistance)
 		result := make([]lineGroup, len(lines))
 		for i, line := range lines {
 			result[i] = lineGroup{items: line, isTableRow: false}
@@ -1094,6 +1112,79 @@ func (c *CompactLines) looksLikeMultiColumnLayout(items []*models.TextItem, colu
 	}
 
 	return false
+}
+
+// detectAndSplitMultiColumnLayout detects 2-column page layouts and splits items
+// into left and right columns for separate processing.
+// Returns (leftItems, rightItems, isMultiColumn).
+func (c *CompactLines) detectAndSplitMultiColumnLayout(items []*models.TextItem, mostUsedDistance int) ([]*models.TextItem, []*models.TextItem, bool) {
+	if len(items) < 10 {
+		return nil, nil, false // Too few items to be a multi-column layout
+	}
+
+	// Find the X range of all items
+	minX, maxX := items[0].X, items[0].X
+	for _, item := range items {
+		if item.X < minX {
+			minX = item.X
+		}
+		if item.X > maxX {
+			maxX = item.X
+		}
+	}
+
+	pageWidth := maxX - minX
+	if pageWidth < 200 {
+		return nil, nil, false // Page too narrow for multi-column
+	}
+
+	// Check if items cluster into two distinct X regions
+	midPoint := minX + pageWidth/2
+	leftCount, rightCount := 0, 0
+	var leftItems, rightItems []*models.TextItem
+
+	for _, item := range items {
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			continue
+		}
+		if item.X < midPoint {
+			leftCount++
+			leftItems = append(leftItems, item)
+		} else {
+			rightCount++
+			rightItems = append(rightItems, item)
+		}
+	}
+
+	// Both sides need significant content to be a 2-column layout
+	if leftCount < 5 || rightCount < 5 {
+		return nil, nil, false
+	}
+
+	// Check if right column has fragment indicators (sentence continuations)
+	fragmentCount := 0
+	for _, item := range rightItems {
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			continue
+		}
+		firstRune := []rune(text)[0]
+		if firstRune >= 'a' && firstRune <= 'z' {
+			fragmentCount++
+		} else if firstRune == '-' || firstRune == '–' || firstRune == '.' ||
+			firstRune == ',' || firstRune == ';' || firstRune == ':' {
+			fragmentCount++
+		}
+	}
+
+	fragmentRatio := float64(fragmentCount) / float64(rightCount)
+	if fragmentRatio < 0.3 {
+		return nil, nil, false // Not enough fragments - probably not a 2-column layout
+	}
+
+	// This is a 2-column layout - return split items
+	return leftItems, rightItems, true
 }
 
 // findTableRegion returns the table region containing the given Y coordinate

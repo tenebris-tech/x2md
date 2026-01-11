@@ -34,6 +34,9 @@ type Options struct {
 	// ExtractHeadersFooters includes document headers and footers in output
 	ExtractHeadersFooters bool
 
+	// Compact removes excessive blank lines from the output
+	Compact bool
+
 	// Callbacks for conversion progress
 	OnDocumentParsed func()
 	OnStylesParsed   func(styleCount int)
@@ -98,6 +101,13 @@ func WithOnStylesParsed(callback func(styleCount int)) Option {
 func WithExtractHeadersFooters(extract bool) Option {
 	return func(o *Options) {
 		o.ExtractHeadersFooters = extract
+	}
+}
+
+// WithCompact removes excessive blank lines from the output.
+func WithCompact(compact bool) Option {
+	return func(o *Options) {
+		o.Compact = compact
 	}
 }
 
@@ -277,5 +287,25 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 		}
 	}
 
-	return output.String(), images, nil
+	markdown := output.String()
+
+	// Apply compact formatting if enabled
+	if c.options.Compact {
+		markdown = compactMarkdown(markdown)
+	}
+
+	return markdown, images, nil
+}
+
+// compactMarkdown reduces excessive blank lines in markdown.
+func compactMarkdown(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	for {
+		newS := strings.ReplaceAll(s, "\n\n\n", "\n\n")
+		if newS == s {
+			break
+		}
+		s = newS
+	}
+	return strings.TrimSpace(s) + "\n"
 }

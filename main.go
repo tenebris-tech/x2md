@@ -29,9 +29,13 @@ func main() {
 	noHeadings := flag.Bool("no-headings", false, "Don't detect headings [PDF only]")
 	noScanMode := flag.Bool("no-scan-mode", false, "Disable automatic scanned page detection [PDF only]")
 
+	// XLSX-specific options
+	noFormulas := flag.Bool("no-formulas", false, "Don't show formulas, only values [XLSX only]")
+
 	// Common options
 	noFormatting := flag.Bool("no-formatting", false, "Don't preserve bold/italic formatting")
 	noImages := flag.Bool("no-images", false, "Don't extract images")
+	compact := flag.Bool("compact", false, "Remove excessive blank lines from output")
 	verbose := flag.Bool("v", false, "Show file disposition (converted/skipped/error)")
 	debug := flag.Bool("d", false, "Debug output (includes page/font/style details)")
 
@@ -89,6 +93,9 @@ func main() {
 	if *noScanMode {
 		pdfOpts = append(pdfOpts, pdf2md.WithScanMode(false))
 	}
+	if *compact {
+		pdfOpts = append(pdfOpts, pdf2md.WithCompact(true))
+	}
 
 	// Build DOCX options
 	var docxOpts []docx2md.Option
@@ -98,9 +105,18 @@ func main() {
 	if *noImages {
 		docxOpts = append(docxOpts, docx2md.WithPreserveImages(false))
 	}
+	if *compact {
+		docxOpts = append(docxOpts, docx2md.WithCompact(true))
+	}
 
 	// Build XLSX options
 	var xlsxOpts []xlsx2md.Option
+	if *noFormulas {
+		xlsxOpts = append(xlsxOpts, xlsx2md.WithShowFormulas(false))
+	}
+	if *compact {
+		xlsxOpts = append(xlsxOpts, xlsx2md.WithCompact(true))
+	}
 
 	// Build converter options
 	var converterOpts []convert.Option

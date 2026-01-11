@@ -32,6 +32,13 @@ type Options struct {
 	// MarkHidden appends a marker to hidden row/column labels
 	MarkHidden bool
 
+	// ShowFormulas displays cell formulas alongside values when true
+	// When false, only the calculated values are shown
+	ShowFormulas bool
+
+	// Compact removes excessive blank lines from the output
+	Compact bool
+
 	// OnSheetParsed is called when a sheet is parsed
 	OnSheetParsed func(name string, rows, cols int)
 }
@@ -47,6 +54,7 @@ func DefaultOptions() *Options {
 		SkipEmptyRows:     true,
 		IncludeHidden:     true,
 		MarkHidden:        true,
+		ShowFormulas:      true,
 	}
 }
 
@@ -89,6 +97,20 @@ func WithMarkHidden(mark bool) Option {
 func WithOnSheetParsed(callback func(name string, rows, cols int)) Option {
 	return func(o *Options) {
 		o.OnSheetParsed = callback
+	}
+}
+
+// WithShowFormulas sets whether to display formulas alongside cell values
+func WithShowFormulas(show bool) Option {
+	return func(o *Options) {
+		o.ShowFormulas = show
+	}
+}
+
+// WithCompact removes excessive blank lines from the output.
+func WithCompact(compact bool) Option {
+	return func(o *Options) {
+		o.Compact = compact
 	}
 }
 
@@ -174,14 +196,34 @@ func (c *Converter) Convert(data []byte) (string, error) {
 				rowLabel := formatRowLabel(row, sheet, c.options.MarkHidden)
 				values := []string{rowLabel}
 				for _, col := range cols {
-					values = append(values, cellDisplay(sheet, row, col))
+					values = append(values, cellDisplay(sheet, row, col, c.options.ShowFormulas))
 				}
 				writeMarkdownRow(&output, values)
 			}
 		}
 	}
 
-	return output.String(), nil
+	markdown := output.String()
+
+	// Apply compact formatting if enabled
+	if c.options.Compact {
+		markdown = compactMarkdown(markdown)
+	}
+
+	return markdown, nil
+}
+
+// compactMarkdown reduces excessive blank lines in markdown.
+func compactMarkdown(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	for {
+		newS := strings.ReplaceAll(s, "\n\n\n", "\n\n")
+		if newS == s {
+			break
+		}
+		s = newS
+	}
+	return strings.TrimSpace(s) + "\n"
 }
 
 type rangeBlock struct {
@@ -372,14 +414,14 @@ func formatRowLabel(row int, sheet *xlsx.Sheet, markHidden bool) string {
 	return label
 }
 
-func cellDisplay(sheet *xlsx.Sheet, row int, col int) string {
+func cellDisplay(sheet *xlsx.Sheet, row int, col int, showFormulas bool) string {
 	cell, ok := sheet.Cells[row][col]
 	if !ok {
 		return ""
 	}
 
 	value := strings.TrimSpace(cell.Value)
-	if cell.HasFormula {
+	if showFormulas && cell.HasFormula {
 		formula := strings.TrimSpace(cell.Formula)
 		if formula != "" {
 			formula = "=" + formula

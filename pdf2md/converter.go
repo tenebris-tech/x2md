@@ -61,6 +61,10 @@ type Options struct {
 	// and the page image is extracted instead of attempting text extraction.
 	ScanMode bool
 
+	// Compact removes excessive blank lines from the output
+	// (reduces 3+ consecutive newlines to 2)
+	Compact bool
+
 	// PageSeparator is the separator between pages
 	PageSeparator string
 
@@ -176,6 +180,14 @@ func WithExtractImages(extract bool) Option {
 func WithScanMode(enabled bool) Option {
 	return func(o *Options) {
 		o.ScanMode = enabled
+	}
+}
+
+// WithCompact removes excessive blank lines from the output.
+// When enabled, 3+ consecutive newlines are reduced to 2.
+func WithCompact(compact bool) Option {
+	return func(o *Options) {
+		o.Compact = compact
 	}
 }
 
@@ -521,6 +533,11 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 		return msg, nil, nil
 	}
 
+	// Apply compact formatting if enabled
+	if c.options.Compact {
+		markdown = compactMarkdown(markdown)
+	}
+
 	return markdown, allImages, nil
 }
 
@@ -579,4 +596,23 @@ func (c *Converter) findLargestImage(images []*pdf.ImageData) *pdf.ImageData {
 	}
 
 	return largest
+}
+
+// compactMarkdown reduces excessive blank lines in markdown.
+// Replaces 3+ consecutive newlines with 2 newlines (single blank line).
+func compactMarkdown(s string) string {
+	// Replace Windows line endings first
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+
+	// Keep reducing multiple newlines until stable
+	for {
+		newS := strings.ReplaceAll(s, "\n\n\n", "\n\n")
+		if newS == s {
+			break
+		}
+		s = newS
+	}
+
+	// Trim leading and trailing whitespace
+	return strings.TrimSpace(s) + "\n"
 }
