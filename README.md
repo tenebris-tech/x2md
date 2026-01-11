@@ -47,6 +47,8 @@ x2md -v document.pdf
 | `-v` | Verbose mode with progress output |
 | `-no-images` | Disable image extraction |
 | `-no-formatting` | Disable bold/italic formatting |
+| `-no-formulas` | Show only values, hide formulas (XLSX only) |
+| `-compact` | Remove excessive blank lines from output |
 | `-strip-headers` | Remove repetitive headers/footers (PDF only) |
 | `-strip-page-numbers` | Remove page numbers (PDF only) |
 | `-strip-toc` | Remove table of contents (PDF only) |
@@ -213,6 +215,7 @@ markdown, images, err := converter.ConvertWithImages(data)
 | `WithDetectHeadings(bool)` | Enable heading detection | true |
 | `WithPreserveFormatting(bool)` | Preserve bold/italic | true |
 | `WithExtractImages(bool)` | Extract images | true |
+| `WithCompact(bool)` | Remove excessive blank lines | false |
 | `WithPageSeparator(string)` | Separator between pages | "\n" |
 
 #### Scanned PDF Handling
@@ -243,10 +246,11 @@ input.pdf → input.md + input_images/image_001.png, image_002.jpg, ...
 
 #### Limitations
 
-- Complex multi-column layouts may interleave columns
 - Non-standard font encodings may cause character issues
 - Mathematical formulas are converted as plain text
 - Encrypted PDFs are not supported
+
+Note: 2-column page layouts are automatically detected and processed with correct reading order (left column first, then right column).
 
 ---
 
@@ -297,6 +301,7 @@ markdown, images, err := converter.ConvertWithImages(data)
 | `WithPreserveFormatting(bool)` | Preserve bold/italic | true |
 | `WithPreserveImages(bool)` | Extract and include images | true |
 | `WithExtractHeadersFooters(bool)` | Include document headers/footers | false |
+| `WithCompact(bool)` | Remove excessive blank lines | false |
 | `WithPageSeparator(string)` | Separator between sections | "\n" |
 
 #### Image Extraction
@@ -345,6 +350,8 @@ err := converter.ConvertFileToFile("input.xlsx", "output.md")
 | `WithSkipEmptyRows(bool)` | Skip empty rows | true |
 | `WithIncludeHidden(bool)` | Include hidden rows/columns | true |
 | `WithMarkHidden(bool)` | Mark hidden rows/columns | true |
+| `WithShowFormulas(bool)` | Show formulas alongside cell values | true |
+| `WithCompact(bool)` | Remove excessive blank lines | false |
 
 #### Limitations
 

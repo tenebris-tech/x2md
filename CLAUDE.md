@@ -89,6 +89,13 @@ Key fields on `LineItem`:
 - `IsTableHeader` - Whether this is a table header row
 - `TableColumns` - Text content of each column
 
+#### 2-Column Page Layout Detection (`pdf2md/transform/compact_lines.go`)
+PDFs with 2-column layouts are automatically detected and processed with correct reading order:
+- `detectAndSplitMultiColumnLayout()` - Detects 2-column layouts by checking if right column items start with lowercase letters or punctuation (indicating sentence continuation)
+- When detected, left column is processed first (top to bottom), then right column
+- Fragment ratio threshold: >30% of right column items starting with lowercase/punctuation triggers detection
+- `looksLikeMultiColumnLayout()` - Used by both table detection and layout detection to avoid false positives
+
 #### Table Rendering (`pdf2md/models/blocktypes.go`)
 `LinesToText()` renders table rows with markdown syntax:
 - `| col1 | col2 | col3 |` for data rows
