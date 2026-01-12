@@ -195,10 +195,19 @@ func (c *CompactLines) extractColumnTexts(items []*models.TextItem, columns []fl
 
 // groupByLineWithTableDetection groups text items, detecting and handling tables
 func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, mostUsedDistance int, footerThreshold float64) []lineGroup {
-	// Convert to TextItems
+	// Convert to TextItems and filter out invalid items
 	var textItems []*models.TextItem
 	for _, item := range items {
 		if ti, ok := item.(*models.TextItem); ok {
+			// Skip items with negative X coordinates (off-page content like hidden metadata)
+			if ti.X < 0 {
+				continue
+			}
+			// Skip items with excessive repetition (likely hidden metadata or watermarks)
+			// Check if the text contains the same phrase repeated many times
+			if isExcessivelyRepetitive(ti.Text) {
+				continue
+			}
 			textItems = append(textItems, ti)
 		}
 	}
@@ -1164,6 +1173,37 @@ func (c *CompactLines) detectAndSplitMultiColumnLayout(items []*models.TextItem,
 		return nil, nil, false
 	}
 
+	// Check for centered text: if many items at the same Y span across the midpoint,
+	// it's likely centered text (like title pages), not a 2-column layout.
+	// Group items by Y and check if any Y group has items on both sides of midpoint.
+	yGroups := make(map[int]struct{ left, right int }) // key = Y * 10 (rounded)
+	for _, item := range items {
+		key := int(item.Y * 10)
+		g := yGroups[key]
+		if item.X < midPoint {
+			g.left++
+		} else {
+			g.right++
+		}
+		yGroups[key] = g
+	}
+
+	// Count Y groups that span both sides (indicating centered/spanning lines)
+	spanningLineCount := 0
+	for _, g := range yGroups {
+		if g.left > 0 && g.right > 0 {
+			spanningLineCount++
+		}
+	}
+
+	// If more than 30% of Y groups span both sides, it's not a true 2-column layout
+	if len(yGroups) > 0 {
+		spanningRatio := float64(spanningLineCount) / float64(len(yGroups))
+		if spanningRatio > 0.3 {
+			return nil, nil, false // Too many lines span both columns - probably centered text
+		}
+	}
+
 	// Check if right column has fragment indicators (sentence continuations)
 	fragmentCount := 0
 	for _, item := range rightItems {
@@ -1957,4 +1997,54 @@ func extractTrailingParenthesizedNumber(s string) (int, string, bool) {
 
 func isDigit(c byte) bool {
 	return c >= '0' && c <= '9'
+}
+
+// isExcessivelyRepetitive detects text that contains the same phrase repeated many times.
+// This is commonly found in PDF metadata, watermarks, or hidden form fields that shouldn't
+// be extracted as regular content. For example: "Scott Chapman    Scott Chapman    Scott Chapman..."
+func isExcessivelyRepetitive(text string) bool {
+	// Skip short texts - they can't have meaningful repetition
+	if len(text) < 100 {
+		return false
+	}
+
+	// Clean and normalize the text
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+
+	// Check for patterns like timestamps or names repeated
+	// Split by common delimiters (whitespace sequences)
+	words := strings.Fields(text)
+	if len(words) < 6 {
+		return false
+	}
+
+	// Look for repeated word sequences
+	// Try different phrase lengths (1-4 words)
+	for phraseLen := 1; phraseLen <= 4; phraseLen++ {
+		if len(words) < phraseLen*4 {
+			continue
+		}
+
+		// Build the first phrase
+		firstPhrase := strings.Join(words[:phraseLen], " ")
+
+		// Count how many times this phrase appears
+		repeatCount := 0
+		for i := 0; i+phraseLen <= len(words); i += phraseLen {
+			phrase := strings.Join(words[i:i+phraseLen], " ")
+			if phrase == firstPhrase {
+				repeatCount++
+			}
+		}
+
+		// If the same phrase appears more than 5 times, it's excessively repetitive
+		if repeatCount > 5 {
+			return true
+		}
+	}
+
+	return false
 }

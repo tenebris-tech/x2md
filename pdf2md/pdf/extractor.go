@@ -1068,7 +1068,7 @@ func (e *TextExtractor) decodeText(text string, fontName string) string {
 	font, ok := e.fonts[fontName]
 	if !ok {
 		// No font info, try basic decoding
-		return e.basicDecode(text)
+		return e.basicDecode(text, "")
 	}
 
 	// Use CMap if available
@@ -1076,10 +1076,17 @@ func (e *TextExtractor) decodeText(text string, fontName string) string {
 		return font.ToUnicode.DecodeString([]byte(text))
 	}
 
-	return e.basicDecode(text)
+	// Use encoding-aware decoding based on font information
+	encoding := font.Encoding
+	// Check if this is a Symbol font (Symbol encoding uses different character mappings)
+	if strings.Contains(strings.ToLower(font.BaseFont), "symbol") {
+		encoding = "Symbol"
+	}
+
+	return e.basicDecode(text, encoding)
 }
 
-func (e *TextExtractor) basicDecode(text string) string {
+func (e *TextExtractor) basicDecode(text string, encoding string) string {
 	data := []byte(text)
 
 	// Check for UTF-16BE BOM
@@ -1095,12 +1102,36 @@ func (e *TextExtractor) basicDecode(text string) string {
 		return string(utf16.Decode(u16))
 	}
 
+	// Check for MacRoman encoding (0xA5 = bullet in MacRoman)
+	isMacRoman := encoding == "MacRomanEncoding" || encoding == "MacRoman"
+	// Symbol fonts use a different character set
+	isSymbol := encoding == "Symbol" || strings.Contains(strings.ToLower(encoding), "symbol")
+
 	// PDFDocEncoding / WinAnsiEncoding (CP1252) fallback
 	var result strings.Builder
 	for _, b := range data {
 		if b >= 32 && b <= 126 {
 			result.WriteByte(b)
 		} else if b >= 128 {
+			// Handle encoding-specific mappings
+			if isSymbol {
+				// Symbol encoding character mappings
+				r := decodeSymbolChar(b)
+				if r != 0 {
+					result.WriteRune(r)
+				}
+				continue
+			}
+
+			if isMacRoman {
+				// MacRoman encoding - 0xA5 is bullet
+				r := decodeMacRomanChar(b)
+				if r != 0 {
+					result.WriteRune(r)
+				}
+				continue
+			}
+
 			// WinAnsi (CP1252) / MacRoman character mappings
 			// Full CP1252 mapping for bytes 0x80-0x9F (undefined in ISO-8859-1)
 			switch b {
@@ -1162,7 +1193,7 @@ func (e *TextExtractor) basicDecode(text string) string {
 			case 0xA0:
 				result.WriteRune(0x00A0) // non-breaking space
 			case 0xA5:
-				result.WriteRune(0x00A5) // yen sign (or bullet in MacRoman)
+				result.WriteRune(0x00A5) // yen sign
 			case 0xA6:
 				result.WriteRune(0x00A6) // broken bar
 			case 0xA7:
@@ -1188,6 +1219,101 @@ func (e *TextExtractor) basicDecode(text string) string {
 		}
 	}
 	return result.String()
+}
+
+// decodeSymbolChar decodes a byte using Symbol encoding
+func decodeSymbolChar(b byte) rune {
+	// Symbol encoding maps - common characters used in PDFs
+	symbolMap := map[byte]rune{
+		0xA5: 0x221E, // infinity (in some symbol fonts)
+		0xB7: 0x2022, // bullet
+		0xD7: 0x00D7, // multiplication sign
+		// Add more as needed
+	}
+	if r, ok := symbolMap[b]; ok {
+		return r
+	}
+	// Default: treat as Latin-1 for unmapped chars
+	if b >= 0xA0 {
+		return rune(b)
+	}
+	return 0
+}
+
+// decodeMacRomanChar decodes a byte using MacRoman encoding
+func decodeMacRomanChar(b byte) rune {
+	// MacRoman encoding differences from Latin-1
+	macRomanMap := map[byte]rune{
+		0x80: 0x00C4, // Ä
+		0x81: 0x00C5, // Å
+		0x82: 0x00C7, // Ç
+		0x83: 0x00C9, // É
+		0x84: 0x00D1, // Ñ
+		0x85: 0x00D6, // Ö
+		0x86: 0x00DC, // Ü
+		0x87: 0x00E1, // á
+		0x88: 0x00E0, // à
+		0x89: 0x00E2, // â
+		0x8A: 0x00E4, // ä
+		0x8B: 0x00E3, // ã
+		0x8C: 0x00E5, // å
+		0x8D: 0x00E7, // ç
+		0x8E: 0x00E9, // é
+		0x8F: 0x00E8, // è
+		0x90: 0x00EA, // ê
+		0x91: 0x00EB, // ë
+		0x92: 0x00ED, // í
+		0x93: 0x00EC, // ì
+		0x94: 0x00EE, // î
+		0x95: 0x00EF, // ï
+		0x96: 0x00F1, // ñ
+		0x97: 0x00F3, // ó
+		0x98: 0x00F2, // ò
+		0x99: 0x00F4, // ô
+		0x9A: 0x00F6, // ö
+		0x9B: 0x00F5, // õ
+		0x9C: 0x00FA, // ú
+		0x9D: 0x00F9, // ù
+		0x9E: 0x00FB, // û
+		0x9F: 0x00FC, // ü
+		0xA0: 0x2020, // dagger
+		0xA1: 0x00B0, // degree sign
+		0xA2: 0x00A2, // cent sign
+		0xA3: 0x00A3, // pound sign
+		0xA4: 0x00A7, // section sign
+		0xA5: 0x2022, // BULLET - key difference from CP1252
+		0xA6: 0x00B6, // pilcrow sign
+		0xA7: 0x00DF, // sharp s
+		0xA8: 0x00AE, // registered sign
+		0xA9: 0x00A9, // copyright sign
+		0xAA: 0x2122, // trademark
+		0xAB: 0x00B4, // acute accent
+		0xAC: 0x00A8, // diaeresis
+		0xAD: 0x2260, // not equal
+		0xAE: 0x00C6, // Æ
+		0xAF: 0x00D8, // Ø
+		0xB0: 0x221E, // infinity
+		0xB1: 0x00B1, // plus-minus
+		0xB2: 0x2264, // less than or equal
+		0xB3: 0x2265, // greater than or equal
+		0xB4: 0x00A5, // yen sign
+		0xB5: 0x00B5, // micro sign
+		0xB7: 0x2211, // summation
+		0xD0: 0x2013, // en dash
+		0xD1: 0x2014, // em dash
+		0xD2: 0x201C, // left double quotation
+		0xD3: 0x201D, // right double quotation
+		0xD4: 0x2018, // left single quotation
+		0xD5: 0x2019, // right single quotation
+	}
+	if r, ok := macRomanMap[b]; ok {
+		return r
+	}
+	// Default: treat as Latin-1 for unmapped chars
+	if b >= 0xA0 {
+		return rune(b)
+	}
+	return 0
 }
 
 func (e *TextExtractor) calculateTextWidth(text string, gs *GraphicsState) float64 {
