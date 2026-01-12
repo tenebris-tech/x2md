@@ -1145,14 +1145,16 @@ func (c *CompactLines) detectAndSplitMultiColumnLayout(items []*models.TextItem,
 
 	for _, item := range items {
 		text := strings.TrimSpace(item.Text)
-		if text == "" {
-			continue
-		}
+		// Include all items (including spaces) but only count non-empty for detection
 		if item.X < midPoint {
-			leftCount++
+			if text != "" {
+				leftCount++
+			}
 			leftItems = append(leftItems, item)
 		} else {
-			rightCount++
+			if text != "" {
+				rightCount++
+			}
 			rightItems = append(rightItems, item)
 		}
 	}
@@ -1688,6 +1690,25 @@ func (c *CompactLines) needsSpaceBetweenWithThreshold(prevText, nextText string,
 	prevLast := lastRune(prevText)
 	nextFirst := firstRune(nextText)
 
+	// Sentence-ending punctuation followed by a letter needs a space
+	// This handles cases like "customers.and" -> "customers. and"
+	if (prevLast == '.' || prevLast == '!' || prevLast == '?') &&
+		((nextFirst >= 'a' && nextFirst <= 'z') || (nextFirst >= 'A' && nextFirst <= 'Z')) {
+		return true
+	}
+
+	// Apostrophe/quote followed by a letter needs a space (e.g., "Inc.'sAsset" -> "Inc.'s Asset")
+	if (prevLast == '\'' || prevLast == '\u2019' || prevLast == '"' || prevLast == '\u201d') &&
+		((nextFirst >= 'A' && nextFirst <= 'Z')) {
+		return true
+	}
+
+	// Possessive "'s" followed by uppercase letter needs a space (e.g., "Inc.'s" + "Asset" -> "Inc.'s Asset")
+	if (strings.HasSuffix(prevText, "'s") || strings.HasSuffix(prevText, "'s")) &&
+		((nextFirst >= 'A' && nextFirst <= 'Z')) {
+		return true
+	}
+
 	// Hyphens/dashes connect without spaces (check BEFORE gap size)
 	if prevLast == '-' || nextFirst == '-' || prevLast == '–' || nextFirst == '–' {
 		return false
@@ -1711,6 +1732,15 @@ func (c *CompactLines) needsSpaceBetweenWithThreshold(prevText, nextText string,
 	// For alphanumeric characters, use the font-relative threshold
 	// This handles cases where width calculations are inaccurate due to font encoding issues
 	if isAlphanumeric(prevLast) && isAlphanumeric(nextFirst) {
+		// Check if prevText ends with a common short word - these always need space after
+		// This handles cases like "and an" + "open" where the gap is small but it's a word boundary
+		prevLower := strings.ToLower(strings.TrimSpace(prevText))
+		shortWordEndings := []string{" a", " an", " the", " to", " of", " in", " on", " is", " be", " we", " or", " and", " for"}
+		for _, ending := range shortWordEndings {
+			if strings.HasSuffix(prevLower, ending) {
+				return true // Always add space after common short words
+			}
+		}
 		return xDistance > wordThreshold
 	}
 
@@ -1767,11 +1797,32 @@ func (c *CompactLines) isWordContinuation(prevText, nextText string) bool {
 	// If prev ends with alphanumeric and next starts with lowercase letter,
 	// it's likely a word continuation (e.g., "AutoUpda" + "te")
 	if isAlphanumeric(prevLast) && nextFirst >= 'a' && nextFirst <= 'z' {
-		// Additional check: nextText should be short (1-4 chars) to be a fragment
-		// Longer text is more likely to be a new word/sentence
-		if len(nextText) <= 4 {
-			return true
+		// Additional check: nextText should be short (1-3 chars) to be a fragment
+		// 4+ chars is more likely to be a new word
+		if len(nextText) > 3 {
+			return false
 		}
+
+		// Check if prevText ends with a common standalone word
+		// These are unlikely to be split mid-word
+		prevLower := strings.ToLower(strings.TrimSpace(prevText))
+		commonEndings := []string{" a", " an", " the", " to", " of", " in", " on", " is", " be", " we", " or"}
+		for _, ending := range commonEndings {
+			if strings.HasSuffix(prevLower, ending) {
+				return false
+			}
+		}
+		// Also check if the entire prevText is a short common word
+		if len(prevLower) <= 3 {
+			shortWords := []string{"a", "an", "to", "of", "in", "on", "is", "be", "we", "or", "as", "at", "by", "if", "so", "no", "up", "my"}
+			for _, w := range shortWords {
+				if prevLower == w {
+					return false
+				}
+			}
+		}
+
+		return true
 	}
 
 	return false

@@ -1095,40 +1095,93 @@ func (e *TextExtractor) basicDecode(text string) string {
 		return string(utf16.Decode(u16))
 	}
 
-	// PDFDocEncoding / WinAnsiEncoding fallback
+	// PDFDocEncoding / WinAnsiEncoding (CP1252) fallback
 	var result strings.Builder
 	for _, b := range data {
 		if b >= 32 && b <= 126 {
 			result.WriteByte(b)
 		} else if b >= 128 {
-			// Common PDFDocEncoding / MacRoman / WinAnsi mappings
+			// WinAnsi (CP1252) / MacRoman character mappings
+			// Full CP1252 mapping for bytes 0x80-0x9F (undefined in ISO-8859-1)
 			switch b {
 			case 0x80:
-				result.WriteRune(0x2022) // bullet
+				result.WriteRune(0x20AC) // Euro sign
+			case 0x82:
+				result.WriteRune(0x201A) // single low-9 quotation mark
+			case 0x83:
+				result.WriteRune(0x0192) // Latin small f with hook
+			case 0x84:
+				result.WriteRune(0x201E) // double low-9 quotation mark
+			case 0x85:
+				result.WriteRune(0x2026) // horizontal ellipsis
+			case 0x86:
+				result.WriteRune(0x2020) // dagger
+			case 0x87:
+				result.WriteRune(0x2021) // double dagger
+			case 0x88:
+				result.WriteRune(0x02C6) // modifier letter circumflex accent
+			case 0x89:
+				result.WriteRune(0x2030) // per mille sign
+			case 0x8A:
+				result.WriteRune(0x0160) // Latin capital S with caron
+			case 0x8B:
+				result.WriteRune(0x2039) // single left-pointing angle quotation
+			case 0x8C:
+				result.WriteRune(0x0152) // Latin capital ligature OE
+			case 0x8E:
+				result.WriteRune(0x017D) // Latin capital Z with caron
 			case 0x91:
-				result.WriteRune(0x2018) // left single quote
+				result.WriteRune(0x2018) // left single quotation mark
 			case 0x92:
-				result.WriteRune(0x2019) // right single quote
+				result.WriteRune(0x2019) // right single quotation mark (apostrophe)
 			case 0x93:
-				result.WriteRune(0x201C) // left double quote
+				result.WriteRune(0x201C) // left double quotation mark
 			case 0x94:
-				result.WriteRune(0x201D) // right double quote
+				result.WriteRune(0x201D) // right double quotation mark
 			case 0x95:
 				result.WriteRune(0x2022) // bullet
 			case 0x96:
 				result.WriteRune(0x2013) // en dash
 			case 0x97:
 				result.WriteRune(0x2014) // em dash
+			case 0x98:
+				result.WriteRune(0x02DC) // small tilde
+			case 0x99:
+				result.WriteRune(0x2122) // trade mark sign
+			case 0x9A:
+				result.WriteRune(0x0161) // Latin small s with caron
+			case 0x9B:
+				result.WriteRune(0x203A) // single right-pointing angle quotation
+			case 0x9C:
+				result.WriteRune(0x0153) // Latin small ligature oe
+			case 0x9E:
+				result.WriteRune(0x017E) // Latin small z with caron
+			case 0x9F:
+				result.WriteRune(0x0178) // Latin capital Y with diaeresis
+			// Bytes 0xA0-0xFF map directly to Unicode in CP1252/Latin-1
+			case 0xA0:
+				result.WriteRune(0x00A0) // non-breaking space
 			case 0xA5:
-				result.WriteRune(0x2022) // bullet (MacRoman encoding)
+				result.WriteRune(0x00A5) // yen sign (or bullet in MacRoman)
 			case 0xA6:
-				result.WriteRune(0x00B6) // pilcrow/paragraph sign
+				result.WriteRune(0x00A6) // broken bar
 			case 0xA7:
 				result.WriteRune(0x00A7) // section sign
+			case 0xA9:
+				result.WriteRune(0x00A9) // copyright sign
+			case 0xAE:
+				result.WriteRune(0x00AE) // registered sign
+			case 0xB0:
+				result.WriteRune(0x00B0) // degree sign
 			case 0xB7:
-				result.WriteRune(0x2022) // middle dot as bullet
+				result.WriteRune(0x00B7) // middle dot
 			default:
-				result.WriteByte(b)
+				// For bytes 0xA0-0xFF, they map directly to Unicode in Latin-1/CP1252
+				if b >= 0xA0 {
+					result.WriteRune(rune(b))
+				}
+				// For undefined bytes 0x81, 0x8D, 0x8F, 0x90, 0x9D, skip them
+				// (they are undefined in CP1252)
 			}
 		} else if b == '\n' || b == '\r' || b == '\t' {
 			result.WriteByte(b)
