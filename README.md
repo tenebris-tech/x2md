@@ -9,12 +9,6 @@ The intent of this library is to provide markdown for consumption by LLMs, not p
 ### Installation
 
 ```bash
-go install github.com/tenebris-tech/x2md/cli@latest
-```
-
-Or build from source:
-
-```bash
 git clone https://github.com/tenebris-tech/x2md.git
 cd x2md
 go build -o x2md ./cli
