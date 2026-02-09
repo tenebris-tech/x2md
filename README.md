@@ -2,6 +2,8 @@
 
 x2md is a pure Go library and CLI for converting documents to Markdown. No CGO dependencies, making it easy to cross-compile for any platform.
 
+The intent of this library is to provide markdown for consumption by LLMs, not pretty rendering. As such, the focus is on extracting structured text content with minimal formatting.
+
 ## CLI
 
 ### Installation
@@ -398,7 +400,12 @@ Inspiration from:
 - https://github.com/opendocsg/pdf2md (MIT License)
 - https://github.com/mozilla/pdf.js (Apache 2.0 License)
 
-## Copyright and Licensing
+## Copyright and license
 
-Copyright (c) 2025 Tenebris Technologies Inc. All rights reserved.
-Please contact us for a licence if you wish to use this software.
+Copyright (c) 2025-2026 by Tenebris Technologies Inc. This software is licensed under the MIT License. Please see LICENSE for details.
+
+## No Warranty (zilch, none, void, nil, null, "", {}, 0x00, 0b00000000, EOF)
+
+THIS SOFTWARE IS PROVIDED “AS IS,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Made in Canada
