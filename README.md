@@ -7,7 +7,7 @@ x2md is a pure Go library and CLI for converting documents to Markdown. No CGO d
 ### Installation
 
 ```bash
-go install github.com/tenebris-tech/x2md@latest
+go install github.com/tenebris-tech/x2md/cli@latest
 ```
 
 Or build from source:
@@ -15,7 +15,7 @@ Or build from source:
 ```bash
 git clone https://github.com/tenebris-tech/x2md.git
 cd x2md
-go build
+go build -o x2md ./cli
 ```
 
 ### Usage
@@ -364,7 +364,7 @@ err := converter.ConvertFileToFile("input.xlsx", "output.md")
 ### Building
 
 ```bash
-go build
+go build -o x2md ./cli
 go test ./...
 go vet ./...
 ```
@@ -372,10 +372,10 @@ go vet ./...
 ### Cross-Compilation
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o x2md-linux
-GOOS=darwin GOARCH=amd64 go build -o x2md-macos
-GOOS=darwin GOARCH=arm64 go build -o x2md-macos-arm
-GOOS=windows GOARCH=amd64 go build -o x2md.exe
+GOOS=linux GOARCH=amd64 go build -o x2md-linux ./cli
+GOOS=darwin GOARCH=amd64 go build -o x2md-macos ./cli
+GOOS=darwin GOARCH=arm64 go build -o x2md-macos-arm ./cli
+GOOS=windows GOARCH=amd64 go build -o x2md.exe ./cli
 ```
 
 ### Adding New Format Support
@@ -386,7 +386,7 @@ To add a new format (e.g., RTF):
 2. Implement parser in `rtf2md/rtf/`
 3. Implement transformations in `rtf2md/transform/`
 4. Add format detection to `convert/converter.go`
-5. Add CLI flags to `main.go`
+5. Add CLI flags to `cli/main.go`
 
 ---
 

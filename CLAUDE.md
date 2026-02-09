@@ -12,7 +12,7 @@ x2md is a pure Go application that converts multiple file types to Markdown. Cur
 
 ```bash
 # Build CLI tool
-go build
+go build -o x2md ./cli
 
 # Run CLI
 ./x2md input.pdf                    # Output: input.md
@@ -33,7 +33,8 @@ go vet ./...
 
 ```
 x2md/
-├── main.go                 # CLI entry point, format detection
+├── cli/
+│   └── main.go             # CLI entry point, format detection
 ├── pdf2md/                 # PDF conversion package
 │   ├── converter.go        # Main API with functional options
 │   ├── pdf/                # Low-level PDF parsing
@@ -193,5 +194,5 @@ To add a new format (e.g., RTF):
 2. Implement parser in `rtf2md/rtf/`
 3. Create `rtf2md/converter.go` with functional options
 4. Implement transformations in `rtf2md/transform/`
-5. Add format detection in `main.go`
+5. Add format detection in `cli/main.go`
 6. Reuse `pdf2md/models/` where applicable
