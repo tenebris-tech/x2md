@@ -132,13 +132,6 @@ func WithPreserveFormatting(preserve bool) Option {
 	}
 }
 
-// WithPageSeparator sets the page separator
-func WithPageSeparator(sep string) Option {
-	return func(o *Options) {
-		o.PageSeparator = sep
-	}
-}
-
 // WithOnPageParsed sets the callback for page parsing
 func WithOnPageParsed(callback func(pageNum, totalPages int)) Option {
 	return func(o *Options) {
@@ -150,20 +143,6 @@ func WithOnPageParsed(callback func(pageNum, totalPages int)) Option {
 func WithOnFontParsed(callback func(fontName string)) Option {
 	return func(o *Options) {
 		o.OnFontParsed = callback
-	}
-}
-
-// WithOnConversionComplete sets the callback for completion
-func WithOnConversionComplete(callback func()) Option {
-	return func(o *Options) {
-		o.OnConversionComplete = callback
-	}
-}
-
-// WithOnPageSkipped sets the callback for skipped pages
-func WithOnPageSkipped(callback func(pageNum int, reason string)) Option {
-	return func(o *Options) {
-		o.OnPageSkipped = callback
 	}
 }
 

@@ -199,7 +199,7 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 					for _, attr := range t.Attr {
 						if stripNamespacePrefix(attr.Name.Local) == "val" {
 							var lvl ILevel
-							fmt.Sscanf(attr.Value, "%d", &lvl.Val)
+							_, _ = fmt.Sscanf(attr.Value, "%d", &lvl.Val)
 							numPr.ILevel = &lvl
 						}
 					}
@@ -209,7 +209,7 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 					for _, attr := range t.Attr {
 						if stripNamespacePrefix(attr.Name.Local) == "val" {
 							var id NumID
-							fmt.Sscanf(attr.Value, "%d", &id.Val)
+							_, _ = fmt.Sscanf(attr.Value, "%d", &id.Val)
 							numPr.NumID = &id
 						}
 					}
@@ -361,7 +361,7 @@ func (e *Extractor) readTextContent(decoder *xml.Decoder) (string, error) {
 func (e *Extractor) parseTableElement(decoder *xml.Decoder) ([]interface{}, error) {
 	var items []interface{}
 	var currentRow []string
-	var isFirstRow bool = true
+	isFirstRow := true
 	var depth int
 
 	for {

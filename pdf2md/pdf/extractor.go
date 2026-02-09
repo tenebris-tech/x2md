@@ -431,11 +431,11 @@ func (e *TextExtractor) parseContentStream(content []byte, mediaBox [4]float64) 
 		HorizScaling: 100,
 	}
 
-	gsStack := []*GraphicsState{}
+	var gsStack []*GraphicsState
 
 	// Tokenize and parse
 	tokens := e.tokenize(content)
-	operandStack := []interface{}{}
+	var operandStack []interface{}
 
 	for _, token := range tokens {
 		if e.isOperator(token) {
@@ -467,11 +467,11 @@ func (e *TextExtractor) parseFormXObject(content []byte, mediaBox [4]float64, pa
 		HorizScaling: 100,
 	}
 
-	gsStack := []*GraphicsState{}
+	var gsStack []*GraphicsState
 
 	// Tokenize and parse
 	tokens := e.tokenize(content)
-	operandStack := []interface{}{}
+	var operandStack []interface{}
 
 	for _, token := range tokens {
 		if e.isOperator(token) {

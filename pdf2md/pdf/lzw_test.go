@@ -68,7 +68,7 @@ func TestDecodeLZWRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to compress: %v", err)
 			}
-			w.Close()
+			_ = w.Close()
 
 			// Decompress using our function
 			decompressed, err := p.decodeLZW(buf.Bytes())

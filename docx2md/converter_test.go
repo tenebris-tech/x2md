@@ -19,7 +19,7 @@ func createTestDocx(content string) []byte {
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 </Types>`
 	f, _ := w.Create("[Content_Types].xml")
-	f.Write([]byte(contentTypes))
+	_, _ = f.Write([]byte(contentTypes))
 
 	// _rels/.rels
 	rels := `<?xml version="1.0" encoding="UTF-8"?>
@@ -27,7 +27,7 @@ func createTestDocx(content string) []byte {
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`
 	f, _ = w.Create("_rels/.rels")
-	f.Write([]byte(rels))
+	_, _ = f.Write([]byte(rels))
 
 	// word/document.xml
 	document := `<?xml version="1.0" encoding="UTF-8"?>
@@ -35,9 +35,9 @@ func createTestDocx(content string) []byte {
   <w:body>` + content + `</w:body>
 </w:document>`
 	f, _ = w.Create("word/document.xml")
-	f.Write([]byte(document))
+	_, _ = f.Write([]byte(document))
 
-	w.Close()
+	_ = w.Close()
 	return buf.Bytes()
 }
 
@@ -118,14 +118,14 @@ func TestConvertHeading(t *testing.T) {
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>`
 	f, _ := w.Create("[Content_Types].xml")
-	f.Write([]byte(contentTypes))
+	_, _ = f.Write([]byte(contentTypes))
 
 	rels := `<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`
 	f, _ = w.Create("_rels/.rels")
-	f.Write([]byte(rels))
+	_, _ = f.Write([]byte(rels))
 
 	document := `<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -139,7 +139,7 @@ func TestConvertHeading(t *testing.T) {
   </w:body>
 </w:document>`
 	f, _ = w.Create("word/document.xml")
-	f.Write([]byte(document))
+	_, _ = f.Write([]byte(document))
 
 	styles := `<?xml version="1.0" encoding="UTF-8"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -149,9 +149,9 @@ func TestConvertHeading(t *testing.T) {
   </w:style>
 </w:styles>`
 	f, _ = w.Create("word/styles.xml")
-	f.Write([]byte(styles))
+	_, _ = f.Write([]byte(styles))
 
-	w.Close()
+	_ = w.Close()
 
 	converter := New()
 	md, err := converter.Convert(buf.Bytes())
@@ -223,8 +223,8 @@ func TestInvalidDocx(t *testing.T) {
 	buf := new(bytes.Buffer)
 	w := zip.NewWriter(buf)
 	f, _ := w.Create("dummy.txt")
-	f.Write([]byte("dummy"))
-	w.Close()
+	_, _ = f.Write([]byte("dummy"))
+	_ = w.Close()
 
 	_, err = converter.Convert(buf.Bytes())
 	if err == nil {

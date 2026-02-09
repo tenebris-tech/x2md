@@ -103,7 +103,7 @@ func (d *DetectHeaders) Transform(result *models.ParseResult) *models.ParseResul
 	}
 
 	// Find headlines with paragraph height but different font (all caps)
-	var smallestHeadlineLevel int = 1
+	smallestHeadlineLevel := 1
 	for _, page := range result.Pages {
 		for _, item := range page.Items {
 			lineItem, ok := item.(*models.LineItem)

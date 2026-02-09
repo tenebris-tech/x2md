@@ -127,11 +127,17 @@ func TestFindLargestImage_Multiple(t *testing.T) {
 
 	// Test with different orderings
 	result := converter.findLargestImage([]*pdf.ImageData{small, large, medium})
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
 	if result != large {
 		t.Errorf("findLargestImage should return largest image, got %dx%d", result.Width, result.Height)
 	}
 
 	result = converter.findLargestImage([]*pdf.ImageData{large, small, medium})
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
 	if result != large {
 		t.Errorf("findLargestImage should return largest image regardless of order, got %dx%d", result.Width, result.Height)
 	}

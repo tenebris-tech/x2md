@@ -40,9 +40,6 @@ type Options struct {
 	// If empty, output files are placed next to source files
 	OutputDirectory string
 
-	// Verbose enables verbose output
-	Verbose bool
-
 	// PDFOptions are passed to the PDF converter
 	PDFOptions []pdf2md.Option
 
@@ -116,13 +113,6 @@ func WithSkipExisting(skip bool) Option {
 func WithOutputDirectory(dir string) Option {
 	return func(o *Options) {
 		o.OutputDirectory = dir
-	}
-}
-
-// WithVerbose enables verbose output
-func WithVerbose(verbose bool) Option {
-	return func(o *Options) {
-		o.Verbose = verbose
 	}
 }
 
@@ -288,7 +278,7 @@ func (c *Converter) processFile(path string, result *Result) {
 	c.processedFiles[realPath] = true
 
 	// Determine output path
-	outputPath, skip, reason := c.getOutputPath(realPath, ext)
+	outputPath, skip, reason := c.getOutputPath(realPath)
 	if skip {
 		if c.options.OnFileSkipped != nil {
 			c.options.OnFileSkipped(realPath, outputPath, reason)
@@ -338,7 +328,7 @@ func (c *Converter) hasExtension(ext string) bool {
 
 // getOutputPath determines the output path for a given input file.
 // Returns the output path, whether to skip the file, and the skip reason.
-func (c *Converter) getOutputPath(inputPath, ext string) (string, bool, string) {
+func (c *Converter) getOutputPath(inputPath string) (string, bool, string) {
 	// Append .md to full filename (e.g., file.pdf -> file.pdf.md)
 	baseName := filepath.Base(inputPath)
 

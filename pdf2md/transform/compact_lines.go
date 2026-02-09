@@ -48,9 +48,6 @@ const (
 	// Set threshold between these ranges to avoid false breaks
 	alphanumericGapThreshold = 25.0
 
-	// smallGapThreshold is the gap size for word boundary detection
-	smallGapThreshold = 15.0
-
 	// minSpaceGapThreshold is the minimum gap that might need a space
 	// (only used for non-alphanumeric boundaries)
 	minSpaceGapThreshold = 10.0
@@ -221,7 +218,7 @@ func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, mostUs
 
 	if len(tableRegions) == 0 {
 		// No tables detected - check for 2-column page layout
-		leftItems, rightItems, isMultiColumn := c.detectAndSplitMultiColumnLayout(textItems, mostUsedDistance)
+		leftItems, rightItems, isMultiColumn := c.detectAndSplitMultiColumnLayout(textItems)
 
 		if isMultiColumn {
 			// Process each column separately, then combine
@@ -380,7 +377,7 @@ func (c *CompactLines) detectTableRegions(items []*models.TextItem, mostUsedDist
 			}
 		}
 
-		var maxY float64 = headerY
+		maxY := headerY
 		for _, item := range tableItems {
 			if item.Y > maxY {
 				maxY = item.Y
@@ -691,11 +688,7 @@ func (c *CompactLines) detectAlignedTables(items []*models.TextItem, mostUsedDis
 			}
 
 			// Check for 2-column page layout being misdetected as table
-			yThreshold := float64(mostUsedDistance) / 2.0
-			if yThreshold < 5 {
-				yThreshold = 5
-			}
-			if len(mergedColumns) == 2 && c.looksLikeMultiColumnLayout(regionItems, mergedColumns, yThreshold) {
+			if len(mergedColumns) == 2 && c.looksLikeMultiColumnLayout(regionItems, mergedColumns) {
 				startIdx = endIdx
 				continue
 			}
@@ -872,7 +865,7 @@ func (c *CompactLines) findTableHeader(items []*models.TextItem, mostUsedDistanc
 		// Need at least 2 columns with good spacing
 		if len(columns) >= 2 {
 			headerY := float64(yBucket) * yThreshold
-			if c.hasAlignedDataRows(items, columns, headerY, mostUsedDistance) {
+			if c.hasAlignedDataRows(items, columns, headerY) {
 				// Score: prefer more columns, and earlier Y positions (tables typically at top of content)
 				score := len(columns)*100 - int(headerY/10)
 				candidates = append(candidates, headerCandidate{headerY, columns, score})
@@ -895,7 +888,7 @@ func (c *CompactLines) findTableHeader(items []*models.TextItem, mostUsedDistanc
 }
 
 // hasAlignedDataRows checks if there are data rows after the header that align with columns
-func (c *CompactLines) hasAlignedDataRows(items []*models.TextItem, columns []float64, headerY float64, mostUsedDistance int) bool {
+func (c *CompactLines) hasAlignedDataRows(items []*models.TextItem, columns []float64, headerY float64) bool {
 	alignedRowCount := 0
 
 	// Group items after header by approximate Y
@@ -1063,7 +1056,7 @@ func (c *CompactLines) validateTableStructure(items []*models.TextItem, columns 
 
 	// Check for multi-column page layout (text continuation between columns)
 	// This detects PDFs with 2-column page layouts being misinterpreted as tables
-	if len(columns) == 2 && c.looksLikeMultiColumnLayout(items, columns, yThreshold) {
+	if len(columns) == 2 && c.looksLikeMultiColumnLayout(items, columns) {
 		return false
 	}
 
@@ -1075,7 +1068,7 @@ func (c *CompactLines) validateTableStructure(items []*models.TextItem, columns 
 // - Second column items often start with lowercase (continuing a sentence)
 // - Second column items are word fragments (start mid-word)
 // - Items that are just punctuation like "-" (hyphenated words split across columns)
-func (c *CompactLines) looksLikeMultiColumnLayout(items []*models.TextItem, columns []float64, yThreshold float64) bool {
+func (c *CompactLines) looksLikeMultiColumnLayout(items []*models.TextItem, columns []float64) bool {
 	if len(columns) != 2 {
 		return false
 	}
@@ -1126,7 +1119,7 @@ func (c *CompactLines) looksLikeMultiColumnLayout(items []*models.TextItem, colu
 // detectAndSplitMultiColumnLayout detects 2-column page layouts and splits items
 // into left and right columns for separate processing.
 // Returns (leftItems, rightItems, isMultiColumn).
-func (c *CompactLines) detectAndSplitMultiColumnLayout(items []*models.TextItem, mostUsedDistance int) ([]*models.TextItem, []*models.TextItem, bool) {
+func (c *CompactLines) detectAndSplitMultiColumnLayout(items []*models.TextItem) ([]*models.TextItem, []*models.TextItem, bool) {
 	if len(items) < 10 {
 		return nil, nil, false // Too few items to be a multi-column layout
 	}

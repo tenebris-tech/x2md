@@ -188,11 +188,11 @@ func main() {
 		// Use the underlying converters directly for explicit output path
 		info, err := os.Stat(inputPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		if info.IsDir() {
-			fmt.Fprintf(os.Stderr, "Error: -output cannot be used with directories\n")
+			_, _ = fmt.Fprintf(os.Stderr, "Error: -output cannot be used with directories\n")
 			os.Exit(1)
 		}
 
@@ -202,7 +202,7 @@ func main() {
 
 		err = convertSingleFile(inputPath, *outputFile, pdfOpts, docxOpts, xlsxOpts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -214,7 +214,7 @@ func main() {
 	converter := convert.New(converterOpts...)
 	result, err := converter.Convert(inputPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 

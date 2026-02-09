@@ -6,7 +6,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -47,15 +46,6 @@ func NewParser(data []byte) (*Parser, error) {
 	}
 
 	return p, nil
-}
-
-// NewParserFromFile creates a parser from a file path
-func NewParserFromFile(path string) (*Parser, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading file: %w", err)
-	}
-	return NewParser(data)
 }
 
 // Parse parses the DOCX structure
@@ -225,7 +215,7 @@ func (p *Parser) readXML(filename string, v interface{}) error {
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", filename, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
@@ -251,7 +241,7 @@ func (p *Parser) ReadFile(filename string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", filename, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	return io.ReadAll(rc)
 }

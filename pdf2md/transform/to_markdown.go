@@ -159,8 +159,8 @@ func deduplicateTableHeader(text string, seenHeaders map[string]bool) string {
 	}
 
 	// Find the header row (first line starting with |)
-	var headerIdx int = -1
-	var separatorIdx int = -1
+	headerIdx := -1
+	separatorIdx := -1
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)

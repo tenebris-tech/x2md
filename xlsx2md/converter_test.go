@@ -13,7 +13,7 @@ func createTestXlsx() []byte {
 
 	writeFile := func(name, content string) {
 		f, _ := w.Create(name)
-		f.Write([]byte(content))
+		_, _ = f.Write([]byte(content))
 	}
 
 	contentTypes := `<?xml version="1.0" encoding="UTF-8"?>
@@ -70,7 +70,7 @@ func createTestXlsx() []byte {
 </worksheet>`
 	writeFile("xl/worksheets/sheet1.xml", worksheet)
 
-	w.Close()
+	_ = w.Close()
 	return buf.Bytes()
 }
 
@@ -80,7 +80,7 @@ func createStructuredXlsx() []byte {
 
 	writeFile := func(name, content string) {
 		f, _ := w.Create(name)
-		f.Write([]byte(content))
+		_, _ = f.Write([]byte(content))
 	}
 
 	contentTypes := `<?xml version="1.0" encoding="UTF-8"?>
@@ -162,7 +162,7 @@ func createStructuredXlsx() []byte {
 <table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="Table1" ref="A1:B3" headerRowCount="1"/>`
 	writeFile("xl/tables/table1.xml", table)
 
-	w.Close()
+	_ = w.Close()
 	return buf.Bytes()
 }
 

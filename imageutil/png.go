@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 )
 
@@ -84,8 +85,12 @@ func CreatePNG(data []byte, width, height, bitsPerComponent int, colorSpace stri
 	// Compress with zlib
 	var compressed bytes.Buffer
 	zlibWriter := zlib.NewWriter(&compressed)
-	zlibWriter.Write(filteredData)
-	zlibWriter.Close()
+	if _, err := zlibWriter.Write(filteredData); err != nil {
+		return nil, fmt.Errorf("compressing PNG data: %w", err)
+	}
+	if err := zlibWriter.Close(); err != nil {
+		return nil, fmt.Errorf("finalizing PNG compression: %w", err)
+	}
 	writeChunk(&buf, "IDAT", compressed.Bytes())
 
 	// IEND chunk

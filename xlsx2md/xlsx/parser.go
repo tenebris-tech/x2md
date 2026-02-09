@@ -416,7 +416,7 @@ func readZipFile(file *zip.File) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", file.Name, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {

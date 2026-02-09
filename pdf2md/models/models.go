@@ -181,11 +181,9 @@ type Annotation struct {
 
 // Standard annotations
 var (
-	AddedAnnotation     = &Annotation{Category: "Added", Color: "green"}
-	RemovedAnnotation   = &Annotation{Category: "Removed", Color: "red"}
-	UnchangedAnnotation = &Annotation{Category: "Unchanged", Color: "brown"}
-	DetectedAnnotation  = &Annotation{Category: "Detected", Color: "green"}
-	ModifiedAnnotation  = &Annotation{Category: "Modified", Color: "green"}
+	AddedAnnotation    = &Annotation{Category: "Added", Color: "green"}
+	RemovedAnnotation  = &Annotation{Category: "Removed", Color: "red"}
+	DetectedAnnotation = &Annotation{Category: "Detected", Color: "green"}
 )
 
 // TextBlock represents a text block for final output

@@ -34,12 +34,6 @@ var (
 			return fmt.Sprintf("[^%s]", s)
 		},
 	}
-	WordTypeFootnote = &WordType{
-		Name: "FOOTNOTE",
-		toTextFunc: func(s string) string {
-			return fmt.Sprintf("(^%s)", s)
-		},
-	}
 	// WordTypeImage represents an embedded image reference
 	// The String field contains the image ID, which maps to an ImageItem
 	WordTypeImage = &WordType{
@@ -77,16 +71,3 @@ var (
 	}
 )
 
-// WordFormatByName returns a word format by name
-func WordFormatByName(name string) *WordFormat {
-	switch name {
-	case "BOLD":
-		return WordFormatBold
-	case "OBLIQUE":
-		return WordFormatOblique
-	case "BOLD_OBLIQUE":
-		return WordFormatBoldOblique
-	default:
-		return nil
-	}
-}

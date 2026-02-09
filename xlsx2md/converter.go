@@ -65,31 +65,10 @@ func WithIncludeSheetNames(include bool) Option {
 	}
 }
 
-// WithSheetSeparator sets the separator between sheets
-func WithSheetSeparator(separator string) Option {
-	return func(o *Options) {
-		o.SheetSeparator = separator
-	}
-}
-
-// WithSkipEmptyRows sets whether to omit empty rows
-func WithSkipEmptyRows(skip bool) Option {
-	return func(o *Options) {
-		o.SkipEmptyRows = skip
-	}
-}
-
 // WithIncludeHidden sets whether to include hidden rows/columns
 func WithIncludeHidden(include bool) Option {
 	return func(o *Options) {
 		o.IncludeHidden = include
-	}
-}
-
-// WithMarkHidden sets whether to mark hidden rows/columns
-func WithMarkHidden(mark bool) Option {
-	return func(o *Options) {
-		o.MarkHidden = mark
 	}
 }
 

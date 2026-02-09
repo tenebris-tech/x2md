@@ -24,23 +24,23 @@ func createTestDocx(content string) []byte {
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 </Types>`
 	f, _ := w.Create("[Content_Types].xml")
-	f.Write([]byte(contentTypes))
+	_, _ = f.Write([]byte(contentTypes))
 
 	rels := `<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`
 	f, _ = w.Create("_rels/.rels")
-	f.Write([]byte(rels))
+	_, _ = f.Write([]byte(rels))
 
 	document := `<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>` + content + `</w:body>
 </w:document>`
 	f, _ = w.Create("word/document.xml")
-	f.Write([]byte(document))
+	_, _ = f.Write([]byte(document))
 
-	w.Close()
+	_ = w.Close()
 	return buf.Bytes()
 }
 
@@ -128,7 +128,7 @@ func TestConvertSingleDocxFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Write test DOCX
 	docxPath := filepath.Join(tmpDir, "test.docx")
@@ -166,7 +166,7 @@ func TestConvertDirectoryWithoutRecursion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	c := New() // Recursion is false by default
 	_, err = c.Convert(tmpDir)
@@ -181,7 +181,7 @@ func TestConvertDirectoryWithRecursion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create subdirectory
 	subDir := filepath.Join(tmpDir, "subdir")
@@ -223,7 +223,7 @@ func TestSkipExisting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Write test DOCX
 	docxPath := filepath.Join(tmpDir, "test.docx")
@@ -261,7 +261,7 @@ func TestNoSkipExistingCreatesNumberedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Write test DOCX
 	docxPath := filepath.Join(tmpDir, "test.docx")
@@ -304,7 +304,7 @@ func TestOutputDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	srcDir := filepath.Join(tmpDir, "src")
 	outDir := filepath.Join(tmpDir, "out")
@@ -348,7 +348,7 @@ func TestOutputDirectoryFlatStructure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	srcDir := filepath.Join(tmpDir, "src")
 	subDir := filepath.Join(srcDir, "sub")
@@ -391,7 +391,7 @@ func TestOutputDirectoryConflictingNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	srcDir := filepath.Join(tmpDir, "src")
 	subDir := filepath.Join(srcDir, "sub")
@@ -434,7 +434,7 @@ func TestExtensionFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Write test files
 	docxData := createTestDocx(`<w:p><w:r><w:t>Hello</w:t></w:r></w:p>`)
@@ -463,7 +463,7 @@ func TestCallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Write test DOCX
 	docxPath := filepath.Join(tmpDir, "test.docx")

@@ -25,9 +25,6 @@ type Options struct {
 	// PreserveImages includes image references in output
 	PreserveImages bool
 
-	// ImageLinkFormat is the template for image links (default: "![{alt}]({path})")
-	ImageLinkFormat string
-
 	// PageSeparator is the separator between sections (currently unused as DOCX has no pages)
 	PageSeparator string
 
@@ -50,8 +47,7 @@ func DefaultOptions() *Options {
 	return &Options{
 		PreserveFormatting: true,
 		PreserveImages:     true,
-		ImageLinkFormat:    "![%s](%s)",
-		PageSeparator:      "\n",
+		PageSeparator: "\n",
 	}
 }
 
@@ -66,13 +62,6 @@ func WithPreserveFormatting(preserve bool) Option {
 func WithPreserveImages(preserve bool) Option {
 	return func(o *Options) {
 		o.PreserveImages = preserve
-	}
-}
-
-// WithImageLinkFormat sets the template for image links
-func WithImageLinkFormat(format string) Option {
-	return func(o *Options) {
-		o.ImageLinkFormat = format
 	}
 }
 
@@ -94,13 +83,6 @@ func WithOnDocumentParsed(callback func()) Option {
 func WithOnStylesParsed(callback func(styleCount int)) Option {
 	return func(o *Options) {
 		o.OnStylesParsed = callback
-	}
-}
-
-// WithExtractHeadersFooters sets whether to extract headers and footers
-func WithExtractHeadersFooters(extract bool) Option {
-	return func(o *Options) {
-		o.ExtractHeadersFooters = extract
 	}
 }
 

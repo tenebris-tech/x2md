@@ -1055,7 +1055,7 @@ func (p *Parser) decodeFlateDecode(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	return io.ReadAll(r)
 }
@@ -1531,7 +1531,7 @@ func (p *Parser) decodeLZW(data []byte) ([]byte, error) {
 	// PDF uses MSB (Most Significant Bit first) order
 	// litWidth of 8 means codes start at 9 bits
 	r := lzw.NewReader(bytes.NewReader(data), lzw.MSB, 8)
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	decoded, err := io.ReadAll(r)
 	if err != nil {

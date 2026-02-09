@@ -20,12 +20,6 @@ type Relationship struct {
 const (
 	RelTypeHyperlink = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
 	RelTypeImage     = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
-	RelTypeStyles    = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
-	RelTypeNumbering = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
-	RelTypeFootnotes = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"
-	RelTypeEndnotes  = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes"
-	RelTypeHeader    = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
-	RelTypeFooter    = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
 )
 
 // GetRelationship returns a relationship by ID

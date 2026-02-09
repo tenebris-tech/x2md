@@ -51,7 +51,7 @@ func createTableXlsx() []byte {
 
 	writeFile := func(name, content string) {
 		f, _ := w.Create(name)
-		f.Write([]byte(content))
+		_, _ = f.Write([]byte(content))
 	}
 
 	contentTypes := `<?xml version="1.0" encoding="UTF-8"?>
@@ -114,6 +114,6 @@ func createTableXlsx() []byte {
 </sst>`
 	writeFile("xl/sharedStrings.xml", sharedStrings)
 
-	w.Close()
+	_ = w.Close()
 	return buf.Bytes()
 }
