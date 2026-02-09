@@ -100,10 +100,10 @@ func NewCompactLines() *CompactLines {
 
 // lineGroup holds text items for a line along with table metadata
 type lineGroup struct {
-	items       []*models.TextItem
-	isTableRow  bool
-	isHeader    bool
-	columns     []float64 // column X positions for table rows
+	items      []*models.TextItem
+	isTableRow bool
+	isHeader   bool
+	columns    []float64 // column X positions for table rows
 }
 
 // Transform groups text items into lines
@@ -1739,13 +1739,13 @@ func (c *CompactLines) needsSpaceBetweenWithThreshold(prevText, nextText string,
 
 	// Apostrophe/quote followed by a letter needs a space (e.g., "Inc.'sAsset" -> "Inc.'s Asset")
 	if (prevLast == '\'' || prevLast == '\u2019' || prevLast == '"' || prevLast == '\u201d') &&
-		((nextFirst >= 'A' && nextFirst <= 'Z')) {
+		(nextFirst >= 'A' && nextFirst <= 'Z') {
 		return true
 	}
 
 	// Possessive "'s" followed by uppercase letter needs a space (e.g., "Inc.'s" + "Asset" -> "Inc.'s Asset")
 	if (strings.HasSuffix(prevText, "'s") || strings.HasSuffix(prevText, "'s")) &&
-		((nextFirst >= 'A' && nextFirst <= 'Z')) {
+		(nextFirst >= 'A' && nextFirst <= 'Z') {
 		return true
 	}
 

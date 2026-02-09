@@ -40,13 +40,13 @@ type ObjectStreamRef struct {
 
 // Parser parses PDF files
 type Parser struct {
-	data           []byte
-	objects        map[int]*Object
-	xref           map[int]int64
-	objStreamRefs  map[int]*ObjectStreamRef // Objects stored in object streams
-	trailer        map[string]interface{}
-	parsedObjStms  map[int]map[int]*Object   // Cached parsed object streams
-	encryption     *EncryptionHandler        // Encryption handler (nil if not encrypted)
+	data          []byte
+	objects       map[int]*Object
+	xref          map[int]int64
+	objStreamRefs map[int]*ObjectStreamRef // Objects stored in object streams
+	trailer       map[string]interface{}
+	parsedObjStms map[int]map[int]*Object // Cached parsed object streams
+	encryption    *EncryptionHandler      // Encryption handler (nil if not encrypted)
 }
 
 // NewParser creates a new PDF parser
@@ -241,9 +241,9 @@ func (p *Parser) parseXRefTable(pos int) error {
 		// Parse the previous xref (could be table or stream)
 		if prevPos+4 <= len(p.data) && string(p.data[prevPos:prevPos+4]) == "xref" {
 			return p.parseXRefTable(prevPos)
-		} else {
-			return p.parseXRefStream(prevPos)
 		}
+
+		return p.parseXRefStream(prevPos)
 	}
 
 	return nil
