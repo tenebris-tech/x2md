@@ -33,7 +33,8 @@ func main() {
 	noFormulas := flag.Bool("no-formulas", false, "Don't show formulas, only values [XLSX only]")
 
 	// Common options
-	noFormatting := flag.Bool("no-formatting", false, "Don't preserve bold/italic formatting")
+	noFormatting := flag.Bool("no-formatting", false, "Don't preserve inline typography formatting")
+	noInlineHTML := flag.Bool("no-inline-html", false, "Don't emit inline HTML for DOCX typography")
 	noImages := flag.Bool("no-images", false, "Don't extract images")
 	compact := flag.Bool("compact", false, "Remove excessive blank lines from output")
 	verbose := flag.Bool("v", false, "Show file disposition (converted/skipped/error)")
@@ -101,6 +102,9 @@ func main() {
 	var docxOpts []docx2md.Option
 	if *noFormatting {
 		docxOpts = append(docxOpts, docx2md.WithPreserveFormatting(false))
+	}
+	if *noInlineHTML {
+		docxOpts = append(docxOpts, docx2md.WithInlineHTML(false))
 	}
 	if *noImages {
 		docxOpts = append(docxOpts, docx2md.WithPreserveImages(false))

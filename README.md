@@ -42,7 +42,8 @@ x2md -v document.pdf
 | `-skip-existing` | Skip files where .md already exists (default: true) |
 | `-v` | Verbose mode with progress output |
 | `-no-images` | Disable image extraction |
-| `-no-formatting` | Disable bold/italic formatting |
+| `-no-formatting` | Disable inline typography formatting |
+| `-no-inline-html` | Disable inline HTML for DOCX typography |
 | `-no-formulas` | Show only values, hide formulas (XLSX only) |
 | `-compact` | Remove excessive blank lines from output |
 | `-strip-headers` | Remove repetitive headers/footers (PDF only) |
@@ -259,7 +260,8 @@ The `docx2md` package converts Microsoft Word documents to Markdown.
 - Heading detection from Word styles (Heading 1-6)
 - List support (bulleted, numbered, lettered, roman numerals) with nesting
 - Table extraction with markdown formatting
-- Bold/italic text formatting
+- DOCX typography: bold, italic, underline, strikethrough, superscript,
+  subscript, highlight, and font color
 - Hyperlink conversion to markdown syntax
 - Footnotes and endnotes
 - Image extraction from embedded media
@@ -277,7 +279,8 @@ err := converter.ConvertFileToFile("input.docx", "output.md")
 
 ```go
 converter := docx2md.New(
-    docx2md.WithPreserveFormatting(false),  // Skip bold/italic
+    docx2md.WithPreserveFormatting(false),  // Skip inline typography
+    docx2md.WithInlineHTML(false),          // Drop HTML-only typography
     docx2md.WithPreserveImages(false),      // Skip image extraction
 )
 markdown, err := converter.ConvertFile("input.docx")
@@ -294,7 +297,8 @@ markdown, images, err := converter.ConvertWithImages(data)
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `WithPreserveFormatting(bool)` | Preserve bold/italic | true |
+| `WithPreserveFormatting(bool)` | Preserve inline typography | true |
+| `WithInlineHTML(bool)` | Emit inline HTML for typography Markdown cannot represent natively | true |
 | `WithPreserveImages(bool)` | Extract and include images | true |
 | `WithExtractHeadersFooters(bool)` | Include document headers/footers | false |
 | `WithCompact(bool)` | Remove excessive blank lines | false |

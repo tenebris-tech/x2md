@@ -2,6 +2,7 @@ package docx
 
 import (
 	"encoding/xml"
+	"strconv"
 	"strings"
 )
 
@@ -13,15 +14,15 @@ type Styles struct {
 
 // StyleDef defines a single style
 type StyleDef struct {
-	XMLName             xml.Name              `xml:"style"`
-	Type                string                `xml:"type,attr"`    // paragraph, character, table, numbering
-	StyleID             string                `xml:"styleId,attr"` // style identifier
-	Default             string                `xml:"default,attr"` // 1 if default style
-	Name                *StyleName            `xml:"name"`
-	BasedOn             *BasedOn              `xml:"basedOn"`
-	Next                *Next                 `xml:"next"`
-	ParagraphProperties *ParagraphProperties  `xml:"pPr"`
-	RunProperties       *RunProperties        `xml:"rPr"`
+	XMLName             xml.Name             `xml:"style"`
+	Type                string               `xml:"type,attr"`    // paragraph, character, table, numbering
+	StyleID             string               `xml:"styleId,attr"` // style identifier
+	Default             string               `xml:"default,attr"` // 1 if default style
+	Name                *StyleName           `xml:"name"`
+	BasedOn             *BasedOn             `xml:"basedOn"`
+	Next                *Next                `xml:"next"`
+	ParagraphProperties *ParagraphProperties `xml:"pPr"`
+	RunProperties       *RunProperties       `xml:"rPr"`
 }
 
 // StyleName contains the style's display name
@@ -134,19 +135,19 @@ type Numbering struct {
 
 // AbstractNum defines an abstract numbering definition
 type AbstractNum struct {
-	XMLName       xml.Name       `xml:"abstractNum"`
-	AbstractNumID int            `xml:"abstractNumId,attr"`
-	Levels        []NumberLevel  `xml:"lvl"`
+	XMLName       xml.Name      `xml:"abstractNum"`
+	AbstractNumID int           `xml:"abstractNumId,attr"`
+	Levels        []NumberLevel `xml:"lvl"`
 }
 
 // NumberLevel defines a numbering level
 type NumberLevel struct {
-	XMLName   xml.Name    `xml:"lvl"`
-	ILevel    int         `xml:"ilvl,attr"`
-	Start     *NumStart   `xml:"start"`
-	NumFmt    *NumFmt     `xml:"numFmt"`
-	LvlText   *LvlText    `xml:"lvlText"`
-	LvlJc     *LvlJc      `xml:"lvlJc"`
+	XMLName     xml.Name     `xml:"lvl"`
+	ILevel      int          `xml:"ilvl,attr"`
+	Start       *NumStart    `xml:"start"`
+	NumFmt      *NumFmt      `xml:"numFmt"`
+	LvlText     *LvlText     `xml:"lvlText"`
+	LvlJc       *LvlJc       `xml:"lvlJc"`
 	Indentation *Indentation `xml:"pPr>ind"`
 }
 
@@ -172,8 +173,8 @@ type LvlJc struct {
 
 // Num maps a numId to an abstractNumId
 type Num struct {
-	XMLName       xml.Name `xml:"num"`
-	NumID         int      `xml:"numId,attr"`
+	XMLName       xml.Name          `xml:"num"`
+	NumID         int               `xml:"numId,attr"`
 	AbstractNumID *AbstractNumIDRef `xml:"abstractNumId"`
 }
 
@@ -238,6 +239,24 @@ func (n *Numbering) IsBullet(numID, level int) bool {
 
 // GetListPrefix returns the list prefix for a numbered item
 func (n *Numbering) GetListPrefix(numID, level, itemNum int) string {
+	return n.GetListPrefixFromCounters(numID, level, map[int]int{level: itemNum})
+}
+
+// GetLevelStart returns the configured starting value for a level.
+func (n *Numbering) GetLevelStart(numID, level int) int {
+	lvl := n.GetLevel(numID, level)
+	if lvl == nil {
+		return 1
+	}
+	if lvl.Start != nil && lvl.Start.Val > 0 {
+		return lvl.Start.Val
+	}
+	return 1
+}
+
+// GetListPrefixFromCounters returns the prefix for a numbered item using the
+// current counter state for all levels referenced by the OOXML lvlText pattern.
+func (n *Numbering) GetListPrefixFromCounters(numID, level int, counters map[int]int) string {
 	lvl := n.GetLevel(numID, level)
 	if lvl == nil {
 		return "- "
@@ -247,46 +266,76 @@ func (n *Numbering) GetListPrefix(numID, level, itemNum int) string {
 		switch lvl.NumFmt.Val {
 		case "bullet":
 			return "- "
-		case "decimal":
-			return formatNumber(itemNum, "decimal") + ". "
-		case "lowerLetter":
-			return formatNumber(itemNum, "lowerLetter") + ". "
-		case "upperLetter":
-			return formatNumber(itemNum, "upperLetter") + ". "
-		case "lowerRoman":
-			return formatNumber(itemNum, "lowerRoman") + ". "
-		case "upperRoman":
-			return formatNumber(itemNum, "upperRoman") + ". "
 		case "none":
 			return ""
 		}
 	}
 
-	return "- "
+	format := "decimal"
+	if lvl.NumFmt != nil {
+		format = lvl.NumFmt.Val
+	}
+
+	if lvl.LvlText != nil && lvl.LvlText.Val != "" {
+		prefix := lvl.LvlText.Val
+		for i := 0; i <= level; i++ {
+			value := counters[i]
+			if value == 0 {
+				value = n.GetLevelStart(numID, i)
+			}
+			levelFormat := format
+			if levelDef := n.GetLevel(numID, i); levelDef != nil && levelDef.NumFmt != nil {
+				levelFormat = levelDef.NumFmt.Val
+			}
+			prefix = strings.ReplaceAll(prefix, "%"+strconv.Itoa(i+1), formatNumber(value, levelFormat))
+		}
+		if prefix != "" && !strings.HasSuffix(prefix, " ") {
+			prefix += " "
+		}
+		return prefix
+	}
+
+	value := counters[level]
+	if value == 0 {
+		value = n.GetLevelStart(numID, level)
+	}
+	return formatNumber(value, format) + ". "
 }
 
 // formatNumber converts a number to the specified format
 func formatNumber(n int, format string) string {
 	switch format {
 	case "decimal":
-		return string(rune('0' + n%10))
+		return strconv.Itoa(n)
 	case "lowerLetter":
-		if n >= 1 && n <= 26 {
-			return string(rune('a' + n - 1))
-		}
-		return string(rune('a' + (n-1)%26))
+		return toLetters(n, false)
 	case "upperLetter":
-		if n >= 1 && n <= 26 {
-			return string(rune('A' + n - 1))
-		}
-		return string(rune('A' + (n-1)%26))
+		return toLetters(n, true)
 	case "lowerRoman":
 		return toRoman(n, false)
 	case "upperRoman":
 		return toRoman(n, true)
 	default:
-		return string(rune('0' + n%10))
+		return strconv.Itoa(n)
 	}
+}
+
+func toLetters(n int, upper bool) string {
+	if n <= 0 {
+		return ""
+	}
+
+	var chars []byte
+	for n > 0 {
+		n--
+		base := byte('a')
+		if upper {
+			base = 'A'
+		}
+		chars = append([]byte{base + byte(n%26)}, chars...)
+		n /= 26
+	}
+	return string(chars)
 }
 
 // toRoman converts a number to Roman numerals

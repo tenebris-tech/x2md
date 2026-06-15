@@ -19,8 +19,12 @@ type Converter struct {
 
 // Options holds configuration for the converter
 type Options struct {
-	// PreserveFormatting preserves bold/italic formatting
+	// PreserveFormatting preserves inline typography formatting.
 	PreserveFormatting bool
+
+	// PreserveInlineHTML preserves typography that Markdown cannot represent
+	// natively by emitting inline HTML.
+	PreserveInlineHTML bool
 
 	// PreserveImages includes image references in output
 	PreserveImages bool
@@ -46,15 +50,24 @@ type Option func(*Options)
 func DefaultOptions() *Options {
 	return &Options{
 		PreserveFormatting: true,
+		PreserveInlineHTML: true,
 		PreserveImages:     true,
-		PageSeparator: "\n",
+		PageSeparator:      "\n",
 	}
 }
 
-// WithPreserveFormatting sets whether to preserve bold/italic
+// WithPreserveFormatting sets whether to preserve inline typography.
 func WithPreserveFormatting(preserve bool) Option {
 	return func(o *Options) {
 		o.PreserveFormatting = preserve
+	}
+}
+
+// WithInlineHTML sets whether to emit inline HTML for typography Markdown
+// cannot represent natively.
+func WithInlineHTML(preserve bool) Option {
+	return func(o *Options) {
+		o.PreserveInlineHTML = preserve
 	}
 }
 
@@ -222,6 +235,7 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 	// Run transformation pipeline
 	pipelineOpts := &transform.PipelineOptions{
 		PreserveFormatting: c.options.PreserveFormatting,
+		PreserveInlineHTML: c.options.PreserveInlineHTML,
 	}
 	pipeline := transform.NewPipeline(pipelineOpts)
 	result := pipeline.Transform(page)

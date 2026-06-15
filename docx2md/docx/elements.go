@@ -16,20 +16,20 @@ type Body struct {
 
 // Paragraph represents a document paragraph (w:p)
 type Paragraph struct {
-	XMLName    xml.Name              `xml:"p"`
-	Properties *ParagraphProperties  `xml:"pPr"`
-	Runs       []Run                 `xml:"r"`
-	Hyperlinks []ParagraphHyperlink  `xml:"hyperlink"`
-	BookmarkStart []BookmarkStart    `xml:"bookmarkStart"`
+	XMLName       xml.Name             `xml:"p"`
+	Properties    *ParagraphProperties `xml:"pPr"`
+	Runs          []Run                `xml:"r"`
+	Hyperlinks    []ParagraphHyperlink `xml:"hyperlink"`
+	BookmarkStart []BookmarkStart      `xml:"bookmarkStart"`
 }
 
 // ParagraphProperties contains paragraph-level properties (w:pPr)
 type ParagraphProperties struct {
-	Style       *StyleRef     `xml:"pStyle"`
-	NumPr       *NumberingPr  `xml:"numPr"`
-	Indentation *Indentation  `xml:"ind"`
+	Style         *StyleRef      `xml:"pStyle"`
+	NumPr         *NumberingPr   `xml:"numPr"`
+	Indentation   *Indentation   `xml:"ind"`
 	Justification *Justification `xml:"jc"`
-	OutlineLevel *OutlineLevel `xml:"outlineLvl"`
+	OutlineLevel  *OutlineLevel  `xml:"outlineLvl"`
 	RunProperties *RunProperties `xml:"rPr"` // Paragraph-level run properties
 }
 
@@ -84,20 +84,20 @@ type Run struct {
 
 // RunProperties contains character-level formatting (w:rPr)
 type RunProperties struct {
-	Bold           *BoolProp  `xml:"b"`
-	BoldCS         *BoolProp  `xml:"bCs"`
-	Italic         *BoolProp  `xml:"i"`
-	ItalicCS       *BoolProp  `xml:"iCs"`
-	Underline      *Underline `xml:"u"`
-	Strike         *BoolProp  `xml:"strike"`
-	DoubleStrike   *BoolProp  `xml:"dstrike"`
-	FontSize       *FontSize  `xml:"sz"`
-	FontSizeCS     *FontSize  `xml:"szCs"`
-	Color          *Color     `xml:"color"`
-	Highlight      *Highlight `xml:"highlight"`
-	VertAlign      *VertAlign `xml:"vertAlign"`
-	Style          *StyleRef  `xml:"rStyle"`
-	Font           *Font      `xml:"rFonts"`
+	Bold         *BoolProp  `xml:"b"`
+	BoldCS       *BoolProp  `xml:"bCs"`
+	Italic       *BoolProp  `xml:"i"`
+	ItalicCS     *BoolProp  `xml:"iCs"`
+	Underline    *Underline `xml:"u"`
+	Strike       *BoolProp  `xml:"strike"`
+	DoubleStrike *BoolProp  `xml:"dstrike"`
+	FontSize     *FontSize  `xml:"sz"`
+	FontSizeCS   *FontSize  `xml:"szCs"`
+	Color        *Color     `xml:"color"`
+	Highlight    *Highlight `xml:"highlight"`
+	VertAlign    *VertAlign `xml:"vertAlign"`
+	Style        *StyleRef  `xml:"rStyle"`
+	Font         *Font      `xml:"rFonts"`
 }
 
 // BoolProp represents a boolean property with optional val attribute
@@ -144,10 +144,10 @@ type VertAlign struct {
 
 // Font specifies font family
 type Font struct {
-	ASCII   string `xml:"ascii,attr"`
-	HAnsi   string `xml:"hAnsi,attr"`
+	ASCII    string `xml:"ascii,attr"`
+	HAnsi    string `xml:"hAnsi,attr"`
 	EastAsia string `xml:"eastAsia,attr"`
-	CS      string `xml:"cs,attr"`
+	CS       string `xml:"cs,attr"`
 }
 
 // Text contains the actual text content (w:t)
@@ -232,8 +232,8 @@ type Table struct {
 
 // TableProperties contains table-level properties
 type TableProperties struct {
-	Style   *StyleRef   `xml:"tblStyle"`
-	Width   *TableWidth `xml:"tblW"`
+	Style   *StyleRef     `xml:"tblStyle"`
+	Width   *TableWidth   `xml:"tblW"`
 	Borders *TableBorders `xml:"tblBorders"`
 }
 
@@ -273,9 +273,9 @@ type GridCol struct {
 
 // TableRow represents a table row (w:tr)
 type TableRow struct {
-	XMLName    xml.Name           `xml:"tr"`
+	XMLName    xml.Name            `xml:"tr"`
 	Properties *TableRowProperties `xml:"trPr"`
-	Cells      []TableCell        `xml:"tc"`
+	Cells      []TableCell         `xml:"tc"`
 }
 
 // TableRowProperties contains row-level properties
@@ -292,18 +292,18 @@ type RowHeight struct {
 
 // TableCell represents a table cell (w:tc)
 type TableCell struct {
-	XMLName    xml.Name            `xml:"tc"`
+	XMLName    xml.Name             `xml:"tc"`
 	Properties *TableCellProperties `xml:"tcPr"`
-	Paragraphs []Paragraph         `xml:"p"`
+	Paragraphs []Paragraph          `xml:"p"`
 }
 
 // TableCellProperties contains cell-level properties
 type TableCellProperties struct {
-	Width     *TableWidth    `xml:"tcW"`
-	GridSpan  *GridSpan      `xml:"gridSpan"`
-	VMerge    *VMerge        `xml:"vMerge"`
-	Borders   *TableBorders  `xml:"tcBorders"`
-	Shading   *Shading       `xml:"shd"`
+	Width    *TableWidth   `xml:"tcW"`
+	GridSpan *GridSpan     `xml:"gridSpan"`
+	VMerge   *VMerge       `xml:"vMerge"`
+	Borders  *TableBorders `xml:"tcBorders"`
+	Shading  *Shading      `xml:"shd"`
 }
 
 // GridSpan specifies horizontal cell merge

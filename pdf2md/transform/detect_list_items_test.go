@@ -50,11 +50,11 @@ func TestIsOrderedListItem(t *testing.T) {
 		// Non-list items
 		{"Regular paragraph text", false},
 		{"No period or paren", false},
-		{"1", false},                        // No period/paren
-		{"a", false},                        // No period/paren
-		{"1.NoSpace", false},                // No space after
-		{"ab. Double letter", false},        // Not single letter
-		{"- Bullet item", false},            // Bullet, not ordered
+		{"1", false},                          // No period/paren
+		{"a", false},                          // No period/paren
+		{"1.NoSpace", false},                  // No space after
+		{"ab. Double letter", false},          // Not single letter
+		{"- Bullet item", false},              // Bullet, not ordered
 		{"Introduction to chapter 1.", false}, // Period at end, not list marker
 	}
 

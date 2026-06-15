@@ -1,16 +1,18 @@
 package models
 
 import (
+	"fmt"
+	"html"
 	"strings"
 )
 
 // BlockType represents a markdown block type
 type BlockType struct {
-	Name                                    string
-	Headline                                bool
-	HeadlineLevel                           int
-	MergeToBlock                            bool
-	MergeFollowingNonTypedItems             bool
+	Name                                         string
+	Headline                                     bool
+	HeadlineLevel                                int
+	MergeToBlock                                 bool
+	MergeFollowingNonTypedItems                  bool
 	MergeFollowingNonTypedItemsWithSmallDistance bool
 }
 
@@ -127,8 +129,25 @@ func BlockTypeByName(name string) *BlockType {
 	}
 }
 
-// LinesToText converts line items to text with formatting
+// TextRenderOptions controls how line items are rendered as Markdown.
+type TextRenderOptions struct {
+	DisableInlineFormats bool
+	PreserveInlineHTML   bool
+	NoImplicitWhitespace bool
+	PreserveWordTypes    bool
+}
+
+// LinesToText converts line items to text with formatting.
 func LinesToText(lineItems []*LineItem, disableInlineFormats bool) string {
+	return LinesToTextWithOptions(lineItems, TextRenderOptions{
+		DisableInlineFormats: disableInlineFormats,
+	})
+}
+
+// LinesToTextWithOptions converts line items to text with explicit rendering
+// controls. NoImplicitWhitespace is intended for DOCX runs, where adjacent runs
+// concatenate directly and whitespace must come from the document content.
+func LinesToTextWithOptions(lineItems []*LineItem, opts TextRenderOptions) string {
 	var text strings.Builder
 	var openFormat *WordFormat
 	var inTable bool
@@ -198,20 +217,29 @@ func LinesToText(lineItems []*LineItem, disableInlineFormats bool) string {
 		for i, word := range line.Words {
 			wordFormat := word.Format
 
-			if openFormat != nil && (wordFormat == nil || wordFormat != openFormat) {
+			if word.Style != nil && openFormat != nil {
 				closeFormat()
 			}
 
-			if i > 0 && (word.Type == nil || !word.Type.AttachWithoutWhitespace) && !isPunctuation(word.String) {
+			if word.Style == nil && openFormat != nil && (wordFormat == nil || wordFormat != openFormat) {
+				closeFormat()
+			}
+
+			if !opts.NoImplicitWhitespace && i > 0 && (word.Type == nil || !word.Type.AttachWithoutWhitespace) && !isPunctuation(word.String) {
 				text.WriteString(" ")
 			}
 
-			if wordFormat != nil && openFormat == nil && !disableInlineFormats {
+			if word.Style != nil {
+				text.WriteString(renderStyledWord(word, opts))
+				continue
+			}
+
+			if wordFormat != nil && openFormat == nil && !opts.DisableInlineFormats {
 				openFormat = wordFormat
 				text.WriteString(openFormat.StartSymbol)
 			}
 
-			if word.Type != nil && (!disableInlineFormats || word.Type.PlainTextFormat) {
+			if word.Type != nil && (!opts.DisableInlineFormats || word.Type.PlainTextFormat || opts.PreserveWordTypes) {
 				text.WriteString(word.Type.ToText(word.String))
 			} else {
 				text.WriteString(word.String)
@@ -230,6 +258,68 @@ func LinesToText(lineItems []*LineItem, disableInlineFormats bool) string {
 	}
 
 	return text.String()
+}
+
+func renderStyledWord(word *Word, opts TextRenderOptions) string {
+	content := word.String
+	if word.Type != nil && (!opts.DisableInlineFormats || word.Type.PlainTextFormat || opts.PreserveWordTypes) {
+		content = word.Type.ToText(word.String)
+	}
+
+	if opts.DisableInlineFormats || word.Style == nil || word.Style.IsZero() {
+		return content
+	}
+
+	style := word.Style
+	if opts.PreserveInlineHTML {
+		content = applyHTMLStyle(content, style)
+	}
+
+	if style.Bold && style.Italic {
+		content = "**_" + content + "_**"
+	} else if style.Bold {
+		content = "**" + content + "**"
+	} else if style.Italic {
+		content = "_" + content + "_"
+	}
+
+	if style.Strike {
+		content = "~~" + content + "~~"
+	}
+
+	return content
+}
+
+func applyHTMLStyle(content string, style *TextStyle) string {
+	if style == nil {
+		return content
+	}
+
+	wrap := func(start, end string) {
+		content = start + content + end
+	}
+
+	var css []string
+	if style.Highlight != "" {
+		css = append(css, fmt.Sprintf("background-color: %s", html.EscapeString(style.Highlight)))
+	}
+	if style.Color != "" {
+		css = append(css, fmt.Sprintf("color: %s", html.EscapeString(style.Color)))
+	}
+	if len(css) > 0 {
+		wrap(`<span style="`+strings.Join(css, "; ")+`">`, "</span>")
+	}
+	if style.Subscript {
+		wrap("<sub>", "</sub>")
+	}
+	if style.Superscript {
+		wrap("<sup>", "</sup>")
+	}
+	if style.Underline {
+		wrap("<u>", "</u>")
+	}
+
+	return content
 }
 
 func isPunctuation(s string) bool {
@@ -269,5 +359,41 @@ func BlockToText(block *LineItemBlock) string {
 		return LinesToText(block.Items, false)
 	default:
 		return LinesToText(block.Items, false)
+	}
+}
+
+// BlockToTextWithOptions converts a block to text using explicit rendering
+// controls. Unlike BlockToText, it does not automatically suppress inline
+// formatting inside headings.
+func BlockToTextWithOptions(block *LineItemBlock, opts TextRenderOptions) string {
+	if block.Type == nil {
+		return LinesToTextWithOptions(block.Items, opts)
+	}
+
+	switch block.Type {
+	case BlockTypeH1:
+		return "# " + LinesToTextWithOptions(block.Items, opts)
+	case BlockTypeH2:
+		return "## " + LinesToTextWithOptions(block.Items, opts)
+	case BlockTypeH3:
+		return "### " + LinesToTextWithOptions(block.Items, opts)
+	case BlockTypeH4:
+		return "#### " + LinesToTextWithOptions(block.Items, opts)
+	case BlockTypeH5:
+		return "##### " + LinesToTextWithOptions(block.Items, opts)
+	case BlockTypeH6:
+		return "###### " + LinesToTextWithOptions(block.Items, opts)
+	case BlockTypeTOC:
+		return LinesToTextWithOptions(block.Items, opts)
+	case BlockTypeFootnotes:
+		return LinesToTextWithOptions(block.Items, opts)
+	case BlockTypeCode:
+		codeOpts := opts
+		codeOpts.DisableInlineFormats = true
+		return "```\n" + LinesToTextWithOptions(block.Items, codeOpts) + "```"
+	case BlockTypeList:
+		return LinesToTextWithOptions(block.Items, opts)
+	default:
+		return LinesToTextWithOptions(block.Items, opts)
 	}
 }

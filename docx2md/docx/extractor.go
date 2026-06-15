@@ -21,6 +21,8 @@ type Extractor struct {
 
 	// List tracking
 	listCounters map[int]map[int]int // numId -> level -> counter
+	inList       bool
+	currentList  int
 
 	// Image tracking
 	images       []*models.ImageItem
@@ -168,7 +170,8 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 	var numPr *NumberingPr
 	var depth int
 
-	var currentBold, currentItalic bool
+	var baseStyle models.TextStyle
+	var currentStyle models.TextStyle
 	var inHyperlink bool
 	var hyperlinkID string
 
@@ -190,6 +193,7 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 				for _, attr := range t.Attr {
 					if stripNamespacePrefix(attr.Name.Local) == "val" {
 						styleID = attr.Value
+						baseStyle = e.styleFromStyleID(styleID)
 					}
 				}
 			case "numPr":
@@ -214,10 +218,32 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 						}
 					}
 				}
+			case "rStyle":
+				e.applyRunStyleID(&currentStyle, attrValue(t, "val"))
 			case "b", "bCs":
-				currentBold = true
+				currentStyle.Bold = boolAttrIsTrue(t)
 			case "i", "iCs":
-				currentItalic = true
+				currentStyle.Italic = boolAttrIsTrue(t)
+			case "u":
+				currentStyle.Underline = underlineAttrIsOn(t)
+			case "strike", "dstrike":
+				currentStyle.Strike = boolAttrIsTrue(t)
+			case "highlight":
+				currentStyle.Highlight = normalizeHighlight(attrValue(t, "val"))
+			case "color":
+				currentStyle.Color = normalizeColor(attrValue(t, "val"))
+			case "vertAlign":
+				switch attrValue(t, "val") {
+				case "superscript":
+					currentStyle.Superscript = true
+					currentStyle.Subscript = false
+				case "subscript":
+					currentStyle.Subscript = true
+					currentStyle.Superscript = false
+				default:
+					currentStyle.Superscript = false
+					currentStyle.Subscript = false
+				}
 			case "hyperlink":
 				inHyperlink = true
 				for _, attr := range t.Attr {
@@ -235,7 +261,8 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 				if text != "" {
 					word := &models.Word{
 						String: text,
-						Format: e.getWordFormat(currentBold, currentItalic),
+						Style:  currentStyle.Copy(),
+						Format: e.getWordFormat(currentStyle.Bold, currentStyle.Italic),
 					}
 					if inHyperlink && hyperlinkID != "" {
 						target := e.relationships.GetTarget(hyperlinkID)
@@ -262,11 +289,12 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 				}
 				if breakType == "page" {
 					// Page break - could be handled specially
+				} else {
+					words = append(words, &models.Word{String: "\n"})
 				}
 			case "r":
 				// Reset run-level formatting
-				currentBold = false
-				currentItalic = false
+				currentStyle = baseStyle
 			case "drawing":
 				// Parse drawing element for images
 				imgWord, err := e.parseDrawingElement(decoder)
@@ -320,8 +348,7 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 				hyperlinkID = ""
 			case "r":
 				// Reset run formatting at end of run
-				currentBold = false
-				currentItalic = false
+				currentStyle = baseStyle
 			default:
 				if depth > 0 {
 					depth--
@@ -441,10 +468,11 @@ func (e *Extractor) parseTableCell(decoder *xml.Decoder) (string, error) {
 				if err != nil {
 					return "", err
 				}
-				if text.Len() > 0 && content != "" {
-					text.WriteString(" ")
-				}
 				text.WriteString(content)
+			} else if localName == "tab" {
+				text.WriteString("\t")
+			} else if localName == "br" {
+				text.WriteString("\n")
 			} else {
 				depth++
 			}
@@ -473,7 +501,7 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 	// Per OOXML spec, runs concatenate directly without implicit spaces
 	words = mergeConsecutiveFormattedWords(words)
 
-	// Clean up whitespace in words
+	// Remove empty runs while preserving intentional DOCX whitespace.
 	words = cleanupWordWhitespace(words)
 
 	if len(words) == 0 {
@@ -484,45 +512,71 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 		Words: words,
 	}
 
+	var isHeading bool
+	var headingLevel int
+
 	// Determine block type from style
 	if styleID != "" {
-		isHeading, level := e.styles.IsHeading(styleID)
+		isHeading, headingLevel = e.styles.IsHeading(styleID)
 		if isHeading {
-			lineItem.Type = models.HeadlineByLevel(level)
+			lineItem.Type = models.HeadlineByLevel(headingLevel)
 		}
 	}
 
-	// Handle list items
+	// Handle numbered headings and list items. Numbered headings keep their
+	// heading block type; ordinary lists use BlockTypeList.
 	if numPr != nil && numPr.NumID != nil {
-		lineItem.Type = models.BlockTypeList
-
-		// Get list prefix
 		numID := numPr.NumID.Val
 		level := 0
 		if numPr.ILevel != nil {
 			level = numPr.ILevel.Val
 		}
 
-		// Track counters
-		if e.listCounters[numID] == nil {
-			e.listCounters[numID] = make(map[int]int)
+		resetList := false
+		if isHeading {
+			e.inList = false
+		} else {
+			resetList = !e.inList || e.currentList != numID
+			e.inList = true
+			e.currentList = numID
 		}
-		e.listCounters[numID][level]++
-		counter := e.listCounters[numID][level]
 
-		// Get prefix
-		prefix := e.numbering.GetListPrefix(numID, level, counter)
+		prefix := e.nextNumberingPrefix(numID, level, resetList)
 
-		// Store list level on LineItem (indentation handled at render time)
-		lineItem.ListLevel = level
+		if !isHeading {
+			lineItem.Type = models.BlockTypeList
+			lineItem.ListLevel = level
+		}
 
 		// Prepend prefix to first word
 		if len(lineItem.Words) > 0 {
 			lineItem.Words[0].String = prefix + lineItem.Words[0].String
 		}
+	} else {
+		e.inList = false
 	}
 
 	return lineItem
+}
+
+func (e *Extractor) nextNumberingPrefix(numID, level int, reset bool) string {
+	if reset || e.listCounters[numID] == nil {
+		e.listCounters[numID] = make(map[int]int)
+	}
+
+	counters := e.listCounters[numID]
+	if counters[level] == 0 {
+		counters[level] = e.numbering.GetLevelStart(numID, level) - 1
+	}
+	counters[level]++
+
+	for existingLevel := range counters {
+		if existingLevel > level {
+			delete(counters, existingLevel)
+		}
+	}
+
+	return e.numbering.GetListPrefixFromCounters(numID, level, counters)
 }
 
 // getWordFormat returns the word format for given formatting flags
@@ -537,6 +591,153 @@ func (e *Extractor) getWordFormat(bold, italic bool) *models.WordFormat {
 		return models.WordFormatOblique
 	}
 	return nil
+}
+
+func (e *Extractor) styleFromStyleID(styleID string) models.TextStyle {
+	var style models.TextStyle
+	e.applyRunStyleIDWithSeen(&style, styleID, make(map[string]bool))
+	return style
+}
+
+func (e *Extractor) applyRunStyleID(style *models.TextStyle, styleID string) {
+	e.applyRunStyleIDWithSeen(style, styleID, make(map[string]bool))
+}
+
+func (e *Extractor) applyRunStyleIDWithSeen(style *models.TextStyle, styleID string, seen map[string]bool) {
+	if styleID == "" || e.styles == nil || seen[styleID] {
+		return
+	}
+	seen[styleID] = true
+
+	styleDef := e.styles.GetStyle(styleID)
+	if styleDef == nil {
+		return
+	}
+
+	if styleDef.BasedOn != nil {
+		e.applyRunStyleIDWithSeen(style, styleDef.BasedOn.Val, seen)
+	}
+	e.applyRunProperties(style, styleDef.RunProperties)
+}
+
+func (e *Extractor) applyRunProperties(style *models.TextStyle, props *RunProperties) {
+	if props == nil {
+		return
+	}
+	if props.Style != nil {
+		e.applyRunStyleID(style, props.Style.Val)
+	}
+	if props.Bold != nil {
+		style.Bold = props.Bold.IsTrue()
+	}
+	if props.BoldCS != nil {
+		style.Bold = props.BoldCS.IsTrue()
+	}
+	if props.Italic != nil {
+		style.Italic = props.Italic.IsTrue()
+	}
+	if props.ItalicCS != nil {
+		style.Italic = props.ItalicCS.IsTrue()
+	}
+	if props.Underline != nil {
+		style.Underline = underlineValueIsOn(props.Underline.Val)
+	}
+	if props.Strike != nil {
+		style.Strike = props.Strike.IsTrue()
+	}
+	if props.DoubleStrike != nil {
+		style.Strike = props.DoubleStrike.IsTrue()
+	}
+	if props.Highlight != nil {
+		style.Highlight = normalizeHighlight(props.Highlight.Val)
+	}
+	if props.Color != nil {
+		style.Color = normalizeColor(props.Color.Val)
+	}
+	if props.VertAlign != nil {
+		switch props.VertAlign.Val {
+		case "superscript":
+			style.Superscript = true
+			style.Subscript = false
+		case "subscript":
+			style.Subscript = true
+			style.Superscript = false
+		default:
+			style.Superscript = false
+			style.Subscript = false
+		}
+	}
+}
+
+func attrValue(el xml.StartElement, localName string) string {
+	for _, attr := range el.Attr {
+		if stripNamespacePrefix(attr.Name.Local) == localName {
+			return attr.Value
+		}
+	}
+	return ""
+}
+
+func boolAttrIsTrue(el xml.StartElement) bool {
+	val := strings.ToLower(strings.TrimSpace(attrValue(el, "val")))
+	switch val {
+	case "", "1", "true", "on", "yes":
+		return true
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
+}
+
+func underlineAttrIsOn(el xml.StartElement) bool {
+	return underlineValueIsOn(attrValue(el, "val"))
+}
+
+func underlineValueIsOn(val string) bool {
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "", "single", "words", "double", "dotted", "thick", "dash", "dotDash", "dotDotDash", "wave":
+		return true
+	case "none", "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
+}
+
+func normalizeColor(val string) string {
+	val = strings.TrimSpace(val)
+	if val == "" || strings.EqualFold(val, "auto") {
+		return ""
+	}
+	if strings.HasPrefix(val, "#") {
+		return val
+	}
+	if len(val) == 6 {
+		return "#" + strings.ToUpper(val)
+	}
+	return val
+}
+
+func normalizeHighlight(val string) string {
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "", "none":
+		return ""
+	case "darkyellow":
+		return "olive"
+	case "darkgreen":
+		return "green"
+	case "darkcyan":
+		return "teal"
+	case "darkblue":
+		return "navy"
+	case "darkmagenta":
+		return "purple"
+	case "darkred":
+		return "maroon"
+	default:
+		return strings.ToLower(strings.TrimSpace(val))
+	}
 }
 
 // GetStyles returns the parsed styles
@@ -565,7 +766,7 @@ func mergeConsecutiveFormattedWords(words []*models.Word) []*models.Word {
 		next := words[i]
 
 		// Check if formats match and neither is a special type (like links)
-		if sameFormat(current.Format, next.Format) && current.Type == nil && next.Type == nil {
+		if sameFormat(current.Format, next.Format) && current.Style.Equal(next.Style) && current.Type == nil && next.Type == nil {
 			// Merge: concatenate directly per OOXML spec (no implicit space)
 			current.String += next.String
 		} else {
@@ -593,36 +794,12 @@ func sameFormat(a, b *models.WordFormat) bool {
 func cleanupWordWhitespace(words []*models.Word) []*models.Word {
 	var result []*models.Word
 	for _, w := range words {
-		// Skip empty words and pure whitespace words (except tabs)
-		trimmed := strings.TrimSpace(w.String)
-		if trimmed == "" && w.String != "\t" {
+		if w.String == "" {
 			continue
 		}
-
-		// Normalize multiple spaces to single space
-		w.String = normalizeSpaces(w.String)
-
 		result = append(result, w)
 	}
 	return result
-}
-
-// normalizeSpaces replaces multiple consecutive spaces with a single space
-func normalizeSpaces(s string) string {
-	var result strings.Builder
-	prevSpace := false
-	for _, r := range s {
-		if r == ' ' {
-			if !prevSpace {
-				result.WriteRune(r)
-				prevSpace = true
-			}
-		} else {
-			result.WriteRune(r)
-			prevSpace = false
-		}
-	}
-	return result.String()
 }
 
 // parseDrawingElement parses a drawing element and extracts image information.

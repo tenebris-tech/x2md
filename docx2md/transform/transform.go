@@ -7,8 +7,12 @@ import (
 
 // PipelineOptions configures the transformation pipeline
 type PipelineOptions struct {
-	// PreserveFormatting keeps bold/italic formatting
+	// PreserveFormatting keeps inline typography formatting.
 	PreserveFormatting bool
+
+	// PreserveInlineHTML keeps typography that Markdown cannot represent
+	// natively by emitting inline HTML.
+	PreserveInlineHTML bool
 }
 
 // Transformation is the interface for pipeline steps
@@ -27,6 +31,7 @@ func NewPipeline(opts *PipelineOptions) *Pipeline {
 	if opts == nil {
 		opts = &PipelineOptions{
 			PreserveFormatting: true,
+			PreserveInlineHTML: true,
 		}
 	}
 
@@ -34,7 +39,7 @@ func NewPipeline(opts *PipelineOptions) *Pipeline {
 		options: opts,
 		transformations: []Transformation{
 			NewGatherBlocks(),
-			NewToTextBlocks(),
+			NewToTextBlocks(opts),
 			NewToMarkdown(),
 		},
 	}

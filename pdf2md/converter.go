@@ -353,10 +353,10 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 
 			// Add empty page to maintain page structure
 			pages = append(pages, &models.Page{
-				Index:    i,
-				Items:    nil, // No text items for scanned pages
-				Width:    pageWidth,
-				Height:   pageHeight,
+				Index:     i,
+				Items:     nil, // No text items for scanned pages
+				Width:     pageWidth,
+				Height:    pageHeight,
 				IsScanned: true,
 			})
 
