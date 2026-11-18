@@ -52,6 +52,8 @@ type LineItem struct {
 	TableColumns  []string // Text content of each column (for table rows)
 	// List-related fields
 	ListLevel int // 0-based nesting level for list items
+	// Source position
+	Paragraph int // 1-based paragraph number in the source document (DOCX), 0 if unknown
 }
 
 // Text returns the text content of the line
@@ -78,6 +80,7 @@ func (l *LineItem) Copy() *LineItem {
 		IsTableHeader:  l.IsTableHeader,
 		TableColumns:   append([]string{}, l.TableColumns...),
 		ListLevel:      l.ListLevel,
+		Paragraph:      l.Paragraph,
 	}
 }
 
@@ -189,8 +192,9 @@ var (
 
 // TextBlock represents a text block for final output
 type TextBlock struct {
-	Category string
-	Text     string
+	Category  string
+	Text      string
+	Paragraph int // 1-based paragraph number of the block's first line (DOCX), 0 if unknown
 }
 
 // ImageItem represents an extracted image from a document

@@ -89,12 +89,55 @@ func (e *Extractor) Extract() (*models.Page, []*models.ImageItem, error) {
 	}, e.images, nil
 }
 
+// bodyReader reads document.xml tokens and counts the paragraphs it passes, so
+// that content can be traced back to its position in the original document.
+//
+// The count is the 1-based position of each w:p element in document order,
+// including paragraphs inside table cells. Paragraphs inside mc:Fallback are
+// not counted: they duplicate the content of the preceding mc:Choice, and a
+// viewer renders only one of the two.
+type bodyReader struct {
+	*xml.Decoder
+	paragraphs    int
+	fallbackDepth int
+}
+
+// Token returns the next token, updating the paragraph count
+func (r *bodyReader) Token() (xml.Token, error) {
+	tok, err := r.Decoder.Token()
+	if err != nil {
+		return tok, err
+	}
+	switch t := tok.(type) {
+	case xml.StartElement:
+		switch {
+		case t.Name.Local == "Fallback":
+			r.fallbackDepth++
+		case t.Name.Local == "p" && isWordNamespace(t.Name.Space) && r.fallbackDepth == 0:
+			r.paragraphs++
+		}
+	case xml.EndElement:
+		if t.Name.Local == "Fallback" && r.fallbackDepth > 0 {
+			r.fallbackDepth--
+		}
+	}
+	return tok, nil
+}
+
+// isWordNamespace reports whether an element namespace is WordprocessingML
+// (transitional or strict), as opposed to e.g. DrawingML, which also has a:p
+func isWordNamespace(space string) bool {
+	return space == "w" ||
+		strings.HasSuffix(space, "/wordprocessingml/2006/main") ||
+		strings.HasSuffix(space, "/wordprocessingml/main")
+}
+
 // parseDocumentBody parses the document body into LineItems
 func (e *Extractor) parseDocumentBody(data []byte) ([]interface{}, error) {
 	var items []interface{}
 
 	// Use streaming parser to handle mixed content
-	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder := &bodyReader{Decoder: xml.NewDecoder(bytes.NewReader(data))}
 	decoder.Strict = false
 
 	var inBody bool
@@ -127,11 +170,13 @@ func (e *Extractor) parseDocumentBody(data []byte) ([]interface{}, error) {
 				switch localName {
 				case "p":
 					// Parse paragraph
+					paraNum := decoder.paragraphs
 					para, err := e.parseParagraphElement(decoder)
 					if err != nil {
 						return nil, err
 					}
 					if para != nil {
+						para.Paragraph = paraNum
 						items = append(items, para)
 					}
 				case "tbl":
@@ -162,7 +207,7 @@ func (e *Extractor) parseDocumentBody(data []byte) ([]interface{}, error) {
 }
 
 // parseParagraphElement parses a paragraph element into a LineItem
-func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineItem, error) {
+func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem, error) {
 	var words []*models.Word
 	var styleID string
 	var numPr *NumberingPr
@@ -334,7 +379,7 @@ func (e *Extractor) parseParagraphElement(decoder *xml.Decoder) (*models.LineIte
 }
 
 // readTextContent reads text content until the closing tag
-func (e *Extractor) readTextContent(decoder *xml.Decoder) (string, error) {
+func (e *Extractor) readTextContent(decoder *bodyReader) (string, error) {
 	var text strings.Builder
 	for {
 		tok, err := decoder.Token()
@@ -358,9 +403,10 @@ func (e *Extractor) readTextContent(decoder *xml.Decoder) (string, error) {
 }
 
 // parseTableElement parses a table into LineItems
-func (e *Extractor) parseTableElement(decoder *xml.Decoder) ([]interface{}, error) {
+func (e *Extractor) parseTableElement(decoder *bodyReader) ([]interface{}, error) {
 	var items []interface{}
 	var currentRow []string
+	var rowPara int // Number of the first paragraph in the current row
 	isFirstRow := true
 	var depth int
 
@@ -380,6 +426,7 @@ func (e *Extractor) parseTableElement(decoder *xml.Decoder) ([]interface{}, erro
 			switch localName {
 			case "tr":
 				currentRow = []string{}
+				rowPara = decoder.paragraphs + 1
 			case "tc":
 				// Parse cell content
 				cellText, err := e.parseTableCell(decoder)
@@ -404,6 +451,7 @@ func (e *Extractor) parseTableElement(decoder *xml.Decoder) ([]interface{}, erro
 						IsTableHeader: isFirstRow,
 						TableColumns:  currentRow,
 						Words:         []*models.Word{{String: strings.Join(currentRow, " | ")}},
+						Paragraph:     rowPara,
 					}
 					items = append(items, lineItem)
 					isFirstRow = false
@@ -420,7 +468,7 @@ func (e *Extractor) parseTableElement(decoder *xml.Decoder) ([]interface{}, erro
 }
 
 // parseTableCell parses a table cell and returns its text content
-func (e *Extractor) parseTableCell(decoder *xml.Decoder) (string, error) {
+func (e *Extractor) parseTableCell(decoder *bodyReader) (string, error) {
 	var text strings.Builder
 	var depth int
 
@@ -627,7 +675,7 @@ func normalizeSpaces(s string) string {
 
 // parseDrawingElement parses a drawing element and extracts image information.
 // Returns a Word with type IMAGE containing the image ID reference.
-func (e *Extractor) parseDrawingElement(decoder *xml.Decoder) (*models.Word, error) {
+func (e *Extractor) parseDrawingElement(decoder *bodyReader) (*models.Word, error) {
 	var embedID string
 	var altText string
 	var depth int

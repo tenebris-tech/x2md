@@ -31,11 +31,19 @@ func (t *ToTextBlocks) Transform(result *models.ParseResult) *models.ParseResult
 			category := "paragraph"
 			if block.Type != nil {
 				category = block.Type.Name
+			} else if isTableBlock(block) {
+				category = "TABLE"
+			}
+
+			paragraph := 0
+			if len(block.Items) > 0 {
+				paragraph = block.Items[0].Paragraph
 			}
 
 			newItems = append(newItems, &models.TextBlock{
-				Category: category,
-				Text:     text,
+				Category:  category,
+				Text:      text,
+				Paragraph: paragraph,
 			})
 		}
 

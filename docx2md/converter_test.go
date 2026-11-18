@@ -8,6 +8,12 @@ import (
 
 // createTestDocx creates a minimal valid DOCX for testing
 func createTestDocx(content string) []byte {
+	return createTestDocxWithParts(content, nil)
+}
+
+// createTestDocxWithParts creates a minimal DOCX with additional parts,
+// given as a map of path within the archive to content
+func createTestDocxWithParts(content string, parts map[string]string) []byte {
 	buf := new(bytes.Buffer)
 	w := zip.NewWriter(buf)
 
@@ -36,6 +42,11 @@ func createTestDocx(content string) []byte {
 </w:document>`
 	f, _ = w.Create("word/document.xml")
 	_, _ = f.Write([]byte(document))
+
+	for name, data := range parts {
+		f, _ = w.Create(name)
+		_, _ = f.Write([]byte(data))
+	}
 
 	_ = w.Close()
 	return buf.Bytes()
@@ -196,7 +207,7 @@ func TestConverterOptions(t *testing.T) {
 	converter := New(
 		WithPreserveFormatting(false),
 		WithPreserveImages(false),
-		WithPageSeparator("\n\n"),
+		WithParagraphMarkers(false),
 	)
 
 	if converter.options.PreserveFormatting {
@@ -205,8 +216,8 @@ func TestConverterOptions(t *testing.T) {
 	if converter.options.PreserveImages {
 		t.Error("Expected PreserveImages to be false")
 	}
-	if converter.options.PageSeparator != "\n\n" {
-		t.Error("Expected PageSeparator to be \\n\\n")
+	if converter.options.ParagraphMarkers {
+		t.Error("Expected ParagraphMarkers to be false")
 	}
 }
 
