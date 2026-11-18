@@ -52,6 +52,7 @@ x2md -v document.pdf
 | `-strip-blank-pages` | Remove blank pages (PDF only) |
 | `-no-lists` | Disable list detection (PDF only) |
 | `-no-headings` | Disable heading detection (PDF only) |
+| `-no-page-markers` | Do not emit `<!-- page N -->` markers (PDF only) |
 | `-no-scan-mode` | Disable automatic scanned page detection (PDF only) |
 
 ---
@@ -169,6 +170,7 @@ The `pdf2md` package converts PDF documents to Markdown.
 - Automatic scanned page detection - extracts page images for OCR/LLM processing
 - Image extraction (JPEG and PNG)
 - Multi-page table handling with header deduplication
+- Page markers so content can be traced back to its physical PDF page
 - Footnote detection
 - Bold/italic text formatting
 - Encrypted PDF detection with clear error message
@@ -212,7 +214,24 @@ markdown, images, err := converter.ConvertWithImages(data)
 | `WithPreserveFormatting(bool)` | Preserve bold/italic | true |
 | `WithExtractImages(bool)` | Extract images | true |
 | `WithCompact(bool)` | Remove excessive blank lines | false |
-| `WithPageSeparator(string)` | Separator between pages | "\n" |
+| `WithPageMarkers(bool)` | Emit `<!-- page N -->` before each page's content | true |
+
+#### Page Markers
+
+So that a reader of the Markdown (typically an LLM) can cite where a passage came from, each page's content is preceded by a marker:
+
+```markdown
+<!-- page 12 -->
+
+Text that starts on page 12...
+```
+
+- `N` is the 1-based physical page of the PDF (the number a viewer's "go to page" or a `file.pdf#page=N` link uses), not the number printed on the page. Stripped blank pages do not shift the numbering.
+- To find the page of a passage, look upward for the nearest marker.
+- A table that continues across pages is preceded by `<!-- pages 3-5 -->`, because a comment between table rows would break the table. The marker for the last page follows the table.
+- The output starts with a one-line comment describing this convention.
+
+Disable with `WithPageMarkers(false)` or `-no-page-markers`.
 
 #### Scanned PDF Handling
 

@@ -65,8 +65,10 @@ type Options struct {
 	// (reduces 3+ consecutive newlines to 2)
 	Compact bool
 
-	// PageSeparator is the separator between pages
-	PageSeparator string
+	// PageMarkers emits a "<!-- page N -->" comment before each page's content,
+	// where N is the 1-based physical page number in the PDF, so that a reader
+	// of the Markdown can tell which page a passage came from.
+	PageMarkers bool
 
 	// Callbacks for conversion progress
 	OnPageParsed         func(pageNum, totalPages int)
@@ -98,7 +100,7 @@ func DefaultOptions() *Options {
 		PreserveFormatting: true,
 		ExtractImages:      true,
 		ScanMode:           true, // Auto-detect scanned pages by default
-		PageSeparator:      "\n",
+		PageMarkers:        true,
 	}
 }
 
@@ -129,6 +131,18 @@ func WithDetectHeadings(detect bool) Option {
 func WithPreserveFormatting(preserve bool) Option {
 	return func(o *Options) {
 		o.PreserveFormatting = preserve
+	}
+}
+
+// WithPageMarkers enables or disables page markers in the output.
+// When enabled (the default), the output starts with a comment describing the
+// convention and each page's content is preceded by "<!-- page N -->", where N
+// is the 1-based physical page number. A table that continues across pages is
+// preceded by "<!-- pages N-M -->" instead, because a comment between table
+// rows would break the table.
+func WithPageMarkers(enabled bool) Option {
+	return func(o *Options) {
+		o.PageMarkers = enabled
 	}
 }
 
@@ -327,6 +341,7 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 		// Check if this page is a scan (ScanMode enabled)
 		if c.options.ScanMode && c.isScannedPage(textItems, pageImages, pageWidth, pageHeight) {
 			// This is a scanned page - extract the largest image as the page image
+			scanImage := ""
 			if len(pageImages) > 0 {
 				// Find the largest image (likely the full page scan)
 				largestImg := c.findLargestImage(pageImages)
@@ -348,6 +363,7 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 						Height:     largestImg.Height,
 					}
 					scannedPageImages = append(scannedPageImages, img)
+					scanImage = pageImageID
 				}
 			}
 
@@ -358,6 +374,7 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 				Width:    pageWidth,
 				Height:   pageHeight,
 				IsScanned: true,
+				ScanImage: scanImage,
 			})
 
 			if c.options.OnPageParsed != nil {
@@ -429,55 +446,18 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 		StripTOC:            c.options.ShouldStrip(TOC),
 		StripFootnotes:      c.options.ShouldStrip(Footnotes),
 		StripBlankPages:     c.options.ShouldStrip(BlankPages),
+		PageMarkers:         c.options.PageMarkers,
 	}
 	pipeline := transform.NewPipeline(fonts, pipelineOpts)
 	result := pipeline.Transform(pages)
 
-	// Combine page outputs
+	// Combine page outputs. Scanned pages are referenced by the pipeline at
+	// their position in the document, so everything is in page order.
 	var output strings.Builder
-
-	// Handle scanned vs non-scanned pages
-	if len(scannedPageImages) > 0 && len(scannedPageImages) == pageCount {
-		// All pages are scanned - just output image references
-		for i, img := range scannedPageImages {
-			output.WriteString(fmt.Sprintf("![%s]\n\n", img.ID))
-			if i < len(scannedPageImages)-1 {
-				output.WriteString(c.options.PageSeparator)
-			}
-		}
-	} else if len(scannedPageImages) > 0 {
-		// Mixed document - some scanned, some text
-		// Output scanned page images in order, interleaved with text content
-		scannedPageIdx := 0
-		for pageIdx := 0; pageIdx < pageCount; pageIdx++ {
-			// Check if this page was scanned
-			if scannedPageIdx < len(scannedPageImages) &&
-				scannedPageImages[scannedPageIdx].PageIndex == pageIdx {
-				// This is a scanned page
-				img := scannedPageImages[scannedPageIdx]
-				output.WriteString(fmt.Sprintf("![%s]\n\n", img.ID))
-				scannedPageIdx++
-			}
-			// Text content from pipeline will be at the end
-		}
-		// Add pipeline text output (for non-scanned pages)
-		for _, page := range result.Pages {
-			for _, item := range page.Items {
-				if text, ok := item.(string); ok {
-					output.WriteString(text)
-				}
-			}
-		}
-	} else {
-		// No scanned pages - normal text output
-		for i, page := range result.Pages {
-			for _, item := range page.Items {
-				if text, ok := item.(string); ok {
-					output.WriteString(text)
-				}
-			}
-			if i < len(result.Pages)-1 {
-				output.WriteString(c.options.PageSeparator)
+	for _, page := range result.Pages {
+		for _, item := range page.Items {
+			if text, ok := item.(string); ok {
+				output.WriteString(text)
 			}
 		}
 	}
@@ -510,6 +490,13 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 			"- The PDF content streams could not be parsed\n\n" +
 			fmt.Sprintf("Document info: %d pages\n", pageCount)
 		return msg, nil, nil
+	}
+
+	// Explain the page marker convention to whoever reads the output
+	if c.options.PageMarkers {
+		markdown = fmt.Sprintf("<!-- x2md: converted from a %d-page PDF. "+
+			"A \"page N\" comment marks where physical page N of the PDF begins; "+
+			"\"pages N-M\" precedes a table spanning those pages. -->\n\n", pageCount) + markdown
 	}
 
 	// Apply compact formatting if enabled

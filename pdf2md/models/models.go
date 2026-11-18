@@ -25,6 +25,7 @@ type Page struct {
 	Width     float64       // Page width in points
 	Height    float64       // Page height in points
 	IsScanned bool          // Whether this page is a scanned image
+	ScanImage string        // Image ID of the page scan, if IsScanned and an image was extracted
 }
 
 // Word represents a word with optional formatting

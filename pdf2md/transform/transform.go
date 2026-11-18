@@ -13,6 +13,7 @@ type PipelineOptions struct {
 	StripTOC            bool
 	StripFootnotes      bool
 	StripBlankPages     bool
+	PageMarkers         bool // Emit <!-- page N --> markers in the output
 }
 
 // Transformation is the interface for all transformations
@@ -56,7 +57,7 @@ func NewPipeline(fontMap map[string]*pdf.Font, opts *PipelineOptions) *Pipeline 
 
 	transformations = append(transformations,
 		NewToTextBlocks(),
-		NewToMarkdown(),
+		NewToMarkdown(opts.PageMarkers),
 	)
 
 	return &Pipeline{

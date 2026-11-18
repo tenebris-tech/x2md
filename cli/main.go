@@ -27,6 +27,7 @@ func main() {
 	stripBlankPages := flag.Bool("strip-blank-pages", false, "Strip blank pages [PDF only]")
 	noLists := flag.Bool("no-lists", false, "Don't detect lists [PDF only]")
 	noHeadings := flag.Bool("no-headings", false, "Don't detect headings [PDF only]")
+	noPageMarkers := flag.Bool("no-page-markers", false, "Do not emit <!-- page N --> markers [PDF only]")
 	noScanMode := flag.Bool("no-scan-mode", false, "Disable automatic scanned page detection [PDF only]")
 
 	// XLSX-specific options
@@ -92,6 +93,9 @@ func main() {
 	}
 	if *noScanMode {
 		pdfOpts = append(pdfOpts, pdf2md.WithScanMode(false))
+	}
+	if *noPageMarkers {
+		pdfOpts = append(pdfOpts, pdf2md.WithPageMarkers(false))
 	}
 	if *compact {
 		pdfOpts = append(pdfOpts, pdf2md.WithCompact(true))

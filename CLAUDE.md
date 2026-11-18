@@ -106,6 +106,12 @@ PDFs with 2-column layouts are automatically detected and processed with correct
 - `deduplicateTableHeader()` - Removes repeated headers from continuation tables
 - `mergeTablesCrossPages()` - Joins table rows separated by page breaks
 
+#### Page Markers (`pdf2md/transform/to_markdown.go`)
+Enabled by default (`WithPageMarkers`, CLI `-no-page-markers`):
+- `<!-- page N -->` precedes each page's content; N is `Page.Index+1` (physical page), so stripped pages do not shift numbering
+- `mergeTablesCrossPages()` holds back markers that fall inside a continued table and emits `<!-- pages N-M -->` before the table instead
+- Scanned pages are emitted in page order by ToMarkdown via `Page.ScanImage`
+
 ### PDF Testing
 Test with reference PDF: `CPP_ND_V3.0E.pdf` (245 pages)
 - Verify table detection on pages 3-5 (Revision History table)

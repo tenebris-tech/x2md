@@ -1,0 +1,114 @@
+package transform
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/tenebris-tech/x2md/pdf2md/models"
+)
+
+func textPage(index int, blocks ...string) *models.Page {
+	page := &models.Page{Index: index}
+	for _, b := range blocks {
+		page.Items = append(page.Items, &models.TextBlock{Text: b})
+	}
+	return page
+}
+
+func runToMarkdown(pageMarkers bool, pages ...*models.Page) string {
+	result := NewToMarkdown(pageMarkers).Transform(&models.ParseResult{Pages: pages})
+	var out strings.Builder
+	for _, page := range result.Pages {
+		for _, item := range page.Items {
+			out.WriteString(item.(string))
+		}
+	}
+	return out.String()
+}
+
+func TestPageMarkers_PhysicalPageNumbers(t *testing.T) {
+	// Page index 1 is missing (e.g. stripped as blank): numbering must not shift
+	got := runToMarkdown(true,
+		textPage(0, "First page text"),
+		textPage(2, "Third page text"),
+	)
+	want := "<!-- page 1 -->\n\nFirst page text\n\n<!-- page 3 -->\n\nThird page text\n\n"
+	if got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestPageMarkers_Disabled(t *testing.T) {
+	got := runToMarkdown(false, textPage(0, "First"), textPage(1, "Second"))
+	if strings.Contains(got, "<!--") {
+		t.Errorf("expected no markers, got:\n%s", got)
+	}
+}
+
+func TestPageMarkers_EmptyPageHasNoMarker(t *testing.T) {
+	got := runToMarkdown(true, textPage(0, "First"), textPage(1), textPage(2, "Third"))
+	if strings.Contains(got, "<!-- page 2 -->") {
+		t.Errorf("empty page should not get a marker, got:\n%s", got)
+	}
+}
+
+func TestPageMarkers_ScannedPageInOrder(t *testing.T) {
+	got := runToMarkdown(true,
+		textPage(0, "First"),
+		&models.Page{Index: 1, IsScanned: true, ScanImage: "page_002"},
+		textPage(2, "Third"),
+	)
+	want := "<!-- page 1 -->\n\nFirst\n\n<!-- page 2 -->\n\n![page_002]\n\n<!-- page 3 -->\n\nThird\n\n"
+	if got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestPageMarkers_TableAcrossPages(t *testing.T) {
+	got := runToMarkdown(true,
+		textPage(0, "Intro", "| A | B |\n| --- | --- |\n| 1 | 2 |"),
+		textPage(1, "| A | B |\n| --- | --- |\n| 3 | 4 |"),
+		textPage(2, "| 5 | 6 |\n| 7 | 8 |", "After the table"),
+		textPage(3, "Last page"),
+	)
+	want := strings.Join([]string{
+		"<!-- page 1 -->",
+		"",
+		"Intro",
+		"",
+		"<!-- pages 1-3 -->",
+		"",
+		"| A | B |",
+		"| --- | --- |",
+		"| 1 | 2 |",
+		"| 3 | 4 |",
+		"| 5 | 6 |",
+		"| 7 | 8 |",
+		"",
+		"<!-- page 3 -->",
+		"",
+		"After the table",
+		"",
+		"<!-- page 4 -->",
+		"",
+		"Last page",
+		"",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPageMarkers_TableWithinOnePage(t *testing.T) {
+	got := runToMarkdown(true,
+		textPage(0, "| A | B |\n| --- | --- |\n| 1 | 2 |"),
+		textPage(1, "Next page"),
+	)
+	if strings.Contains(got, "<!-- pages") {
+		t.Errorf("single-page table should not get a range marker, got:\n%s", got)
+	}
+	if !strings.Contains(got, "| 1 | 2 |\n\n<!-- page 2 -->\n\nNext page") {
+		t.Errorf("unexpected output:\n%s", got)
+	}
+}
