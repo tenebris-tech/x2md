@@ -107,10 +107,16 @@ PDFs with 2-column layouts are automatically detected and processed with correct
 - `mergeTablesCrossPages()` - Joins table rows separated by page breaks
 
 #### Page Markers (`pdf2md/transform/to_markdown.go`)
-Enabled by default (`WithPageMarkers`, CLI `-no-page-markers`):
+Enabled by default (`WithPageMarkers`, CLI `-no-location-markers`):
 - `<!-- page N -->` precedes each page's content; N is `Page.Index+1` (physical page), so stripped pages do not shift numbering
 - `mergeTablesCrossPages()` holds back markers that fall inside a continued table and emits `<!-- pages N-M -->` before the table instead
 - Scanned pages are emitted in page order by ToMarkdown via `Page.ScanImage`
+
+#### Glyph-by-Glyph Text (`pdf2md/pdf/extractor.go`)
+`mergeGlyphRuns()` handles PDFs that draw every glyph with its own show-text operation and no space characters:
+- Applies only to pages where at least 80% of text items are fragments of 3 runes or fewer
+- Joins touching fragments and inserts a space where the gap is 0.18-0.6 of the font size
+- Pages that draw words or lines per operation are returned unchanged (table and reference detection depend on their short fragments staying separate)
 
 ### PDF Testing
 Test with reference PDF: `CPP_ND_V3.0E.pdf` (245 pages)
@@ -166,6 +172,13 @@ Per OOXML specification, text runs (`<w:r>`) concatenate directly without implic
 - `GetTarget()` resolves relationship ID to URL
 - External links have `TargetMode="External"`
 
+#### Paragraph Markers (`docx2md/docx/extractor.go`, `docx2md/transform/to_markdown.go`)
+Enabled by default (`WithParagraphMarkers`, CLI `-no-location-markers`):
+- `bodyReader` wraps the XML decoder and counts every `w:p` in document order, including table cells and empty paragraphs, skipping `mc:Fallback`
+- `LineItem.Paragraph` / `TextBlock.Paragraph` carry the number through the pipeline (`LineItem.Copy()` must copy it)
+- `<!-- para N -->` precedes every heading and table, and at least every `ParagraphMarkerInterval` paragraphs elsewhere
+- The count matches the paragraph order of a browser DOCX renderer (verified against docx-preview), so a viewer can scroll to the Nth paragraph
+
 ### DOCX Testing
 Test with sample DOCX files in `private/`:
 - Verify text run merging (no split words like "an d")
@@ -195,6 +208,16 @@ Both PDF and DOCX converters use the shared models package:
 ## Source Path Header (`internal/source/`)
 
 File-based conversions in all formats (`ConvertFile`, `ConvertFileToFile`) start the Markdown with `<!-- source: /absolute/path -->`. Data-based conversions (`Convert`) have no path, so no header. New formats should call `source.Prepend()` the same way.
+
+---
+
+## Location Contract and Tests
+
+The Markdown must let a reader trace any passage back to its place in the original: source path (first line), then page (PDF), paragraph (DOCX) or sheet/range/row (XLSX). XLSX output already carries `### Range: Sheet!A1:D8` headings and a `Row` column.
+
+- `cli/main_test.go` builds the CLI and runs it on the fixtures in `testdata/`, asserting where known passages are located. These run in CI (`.github/workflows/ci.yml`).
+- `testdata/README.md` describes each fixture and how it was made.
+- `integration_test.go` uses `private/`, which is not in the repository; those tests skip when the files are absent.
 
 ---
 

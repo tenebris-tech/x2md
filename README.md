@@ -52,7 +52,7 @@ x2md -v document.pdf
 | `-strip-blank-pages` | Remove blank pages (PDF only) |
 | `-no-lists` | Disable list detection (PDF only) |
 | `-no-headings` | Disable heading detection (PDF only) |
-| `-no-page-markers` | Do not emit `<!-- page N -->` markers (PDF only) |
+| `-no-location-markers` | Do not emit `<!-- page N -->` (PDF) or `<!-- para N -->` (DOCX) markers |
 | `-no-scan-mode` | Disable automatic scanned page detection (PDF only) |
 
 ---
@@ -241,7 +241,7 @@ Text that starts on page 12...
 - A table that continues across pages is preceded by `<!-- pages 3-5 -->`, because a comment between table rows would break the table. The marker for the last page follows the table.
 - The output starts with a one-line comment describing this convention (after the source path line).
 
-Disable with `WithPageMarkers(false)` or `-no-page-markers`.
+Disable with `WithPageMarkers(false)` or `-no-location-markers`.
 
 #### Scanned PDF Handling
 
@@ -292,6 +292,7 @@ The `docx2md` package converts Microsoft Word documents to Markdown.
 - Hyperlink conversion to markdown syntax
 - Footnotes and endnotes
 - Image extraction from embedded media
+- Paragraph markers so content can be traced back to its place in the document
 
 #### Simple Usage
 
@@ -327,7 +328,24 @@ markdown, images, err := converter.ConvertWithImages(data)
 | `WithPreserveImages(bool)` | Extract and include images | true |
 | `WithExtractHeadersFooters(bool)` | Include document headers/footers | false |
 | `WithCompact(bool)` | Remove excessive blank lines | false |
-| `WithPageSeparator(string)` | Separator between sections | "\n" |
+| `WithParagraphMarkers(bool)` | Emit `<!-- para N -->` location markers | true |
+
+#### Paragraph Markers
+
+A DOCX has no fixed pages, so content is located by paragraph number instead:
+
+```markdown
+<!-- para 57 -->
+
+## 3.2 Scope
+```
+
+- `N` is the 1-based position of a paragraph in the document body, counting every paragraph (`w:p`) in order, including paragraphs inside table cells and empty ones. Text box content stored twice for compatibility (`mc:Fallback`) is counted once.
+- The content after a marker starts at paragraph N. A marker precedes every heading and table, and appears at least every ten paragraphs elsewhere.
+- To locate a passage, take the nearest marker above it and search for the passage's text from that paragraph on. A viewer that renders the DOCX to HTML one element per paragraph can scroll to the Nth paragraph directly.
+- The output starts with a one-line comment describing this convention (after the source path line).
+
+Disable with `WithParagraphMarkers(false)` or `-no-location-markers`.
 
 #### Image Extraction
 
