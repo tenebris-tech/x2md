@@ -152,6 +152,16 @@ type Result struct {
 
 ## Document Formats
 
+### Source Path
+
+When converting from a file (`ConvertFile`, `ConvertFileToFile`, the CLI and the `convert` package), the first line of the Markdown is a comment with the absolute path of the original file, as it was at conversion time:
+
+```markdown
+<!-- source: /home/user/docs/report.pdf -->
+```
+
+Conversions from in-memory data (`Convert`, `ConvertWithImages`) have no path and no such line.
+
 x2md supports multiple document formats. Each format has its own package that can be used directly for more control, or through the unified `convert` package.
 
 - **PDF** - Text-based and scanned PDF documents (`pdf2md`)
@@ -229,7 +239,7 @@ Text that starts on page 12...
 - `N` is the 1-based physical page of the PDF (the number a viewer's "go to page" or a `file.pdf#page=N` link uses), not the number printed on the page. Stripped blank pages do not shift the numbering.
 - To find the page of a passage, look upward for the nearest marker.
 - A table that continues across pages is preceded by `<!-- pages 3-5 -->`, because a comment between table rows would break the table. The marker for the last page follows the table.
-- The output starts with a one-line comment describing this convention.
+- The output starts with a one-line comment describing this convention (after the source path line).
 
 Disable with `WithPageMarkers(false)` or `-no-page-markers`.
 

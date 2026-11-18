@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tenebris-tech/x2md/imageutil"
+	"github.com/tenebris-tech/x2md/internal/source"
 	"github.com/tenebris-tech/x2md/pdf2md/models"
 	"github.com/tenebris-tech/x2md/pdf2md/pdf"
 	"github.com/tenebris-tech/x2md/pdf2md/transform"
@@ -197,16 +198,22 @@ func New(opts ...Option) *Converter {
 	return &Converter{options: options}
 }
 
-// ConvertFile converts a PDF file to Markdown
+// ConvertFile converts a PDF file to Markdown.
+// The output starts with a comment giving the absolute path of the input file.
 func (c *Converter) ConvertFile(inputPath string) (string, error) {
 	data, err := os.ReadFile(inputPath)
 	if err != nil {
 		return "", fmt.Errorf("reading file: %w", err)
 	}
-	return c.Convert(data)
+	markdown, err := c.Convert(data)
+	if err != nil {
+		return "", err
+	}
+	return source.Prepend(markdown, inputPath), nil
 }
 
-// ConvertFileToFile converts a PDF file and writes the result to a file
+// ConvertFileToFile converts a PDF file and writes the result to a file.
+// The output starts with a comment giving the absolute path of the input file.
 func (c *Converter) ConvertFileToFile(inputPath, outputPath string) error {
 	// Read input file
 	data, err := os.ReadFile(inputPath)
@@ -228,6 +235,7 @@ func (c *Converter) ConvertFileToFile(inputPath, outputPath string) error {
 		}
 	}
 
+	markdown = source.Prepend(markdown, inputPath)
 	return os.WriteFile(outputPath, []byte(markdown), 0644)
 }
 
@@ -369,10 +377,10 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 
 			// Add empty page to maintain page structure
 			pages = append(pages, &models.Page{
-				Index:    i,
-				Items:    nil, // No text items for scanned pages
-				Width:    pageWidth,
-				Height:   pageHeight,
+				Index:     i,
+				Items:     nil, // No text items for scanned pages
+				Width:     pageWidth,
+				Height:    pageHeight,
 				IsScanned: true,
 				ScanImage: scanImage,
 			})

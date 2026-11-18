@@ -192,6 +192,12 @@ Both PDF and DOCX converters use the shared models package:
 
 ---
 
+## Source Path Header (`internal/source/`)
+
+File-based conversions in all formats (`ConvertFile`, `ConvertFileToFile`) start the Markdown with `<!-- source: /absolute/path -->`. Data-based conversions (`Convert`) have no path, so no header. New formats should call `source.Prepend()` the same way.
+
+---
+
 ## Adding New Format Support
 
 To add a new format (e.g., RTF):
