@@ -6,7 +6,7 @@
 # x2md Makefile
 #
 #   make              run the full test suite, then build if it passed
-#   make test         run the full test suite (the one gate, for developers and CI)
+#   make test         run the full test suite (the one gate, for developers and the build system)
 #   make build        build the binaries, no tests
 #   make clean        remove build output and drop the test cache
 #   make fmt          rewrite Go files with gofmt (make test only verifies)

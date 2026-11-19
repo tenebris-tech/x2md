@@ -36,7 +36,7 @@ go test ./some/package
 
 This project follows the standards in https://github.com/securityguy/coding (`standards/go/`, `standards/makefile/`). In particular:
 
-- `make test` (implemented by `test.sh`) is the single test gate and what CI runs. It must run everything, never modify the working tree, and print the standard summary. New test sections go in `test.sh` using its numbering scheme.
+- `make test` (implemented by `test.sh`) is the single test gate. The owner's build system runs it; there is no GitHub Actions workflow, and none should be added. It must run everything, never modify the working tree, and print the standard summary. New test sections go in `test.sh` using its numbering scheme.
 - Tests must not skip silently. Tests that need the private corpus are behind the `private` build tag and run with `make test-private`, which fails if a file is missing.
 - Every Go source file starts with the copyright header (holder as in `LICENSE`).
 - Code must be `gofmt`-clean; `make test` verifies it and `make fmt` applies it.
@@ -44,6 +44,7 @@ This project follows the standards in https://github.com/securityguy/coding (`st
 
 Decisions and known deviations:
 - No `app/` identity package and no `--version` output. Decided by the owner: x2md is primarily a library, so it does not need one. Do not add it or ask again.
+- No `make install` target. Decided by the owner for the same reason. Do not add it or ask again.
 - The CLI's `main.go` lives in `cli/`, not at the repository root. Do not move it without asking.
 
 ## Architecture
@@ -236,7 +237,6 @@ The Markdown must let a reader trace any passage back to its place in the origin
 
 - `cli/main_test.go` builds the CLI and runs it on the fixtures in `testdata/`, asserting where known passages are located.
 - `test.sh` sections 3-5 drive the compiled CLI and assert on output files, stdout, stderr and exit codes.
-- CI (`.github/workflows/ci.yml`) runs `make test`.
 - `testdata/README.md` describes each fixture and how it was made.
 - `integration_test.go` uses `private/`, which is not in the repository; it is built only with the `private` tag (`make test-private`).
 

@@ -408,7 +408,7 @@ err := converter.ConvertFileToFile("input.xlsx", "output.md")
 
 ```bash
 make              # run the full test suite, then build bin/x2md if it passed
-make test         # run the full test suite (the gate for developers and CI)
+make test         # run the full test suite (the gate for developers and the build system)
 make build        # build bin/x2md without running tests
 make clean        # remove build output and drop the Go test cache
 make fmt          # rewrite Go files with gofmt (make test only verifies)
