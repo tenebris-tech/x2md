@@ -42,9 +42,9 @@ This project follows the standards in https://github.com/securityguy/coding (`st
 - Code must be `gofmt`-clean; `make test` verifies it and `make fmt` applies it.
 - No new external dependencies without approval.
 
-Known deviations, not to be changed without asking:
-- There is no `app/` identity package and no `--version` output.
-- The CLI's `main.go` lives in `cli/`, not at the repository root.
+Decisions and known deviations:
+- No `app/` identity package and no `--version` output. Decided by the owner: x2md is primarily a library, so it does not need one. Do not add it or ask again.
+- The CLI's `main.go` lives in `cli/`, not at the repository root. Do not move it without asking.
 
 ## Architecture
 
