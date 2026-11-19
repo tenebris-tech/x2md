@@ -50,7 +50,7 @@ func DefaultOptions() *Options {
 	return &Options{
 		PreserveFormatting: true,
 		PreserveImages:     true,
-		ParagraphMarkers: true,
+		ParagraphMarkers:   true,
 	}
 }
 

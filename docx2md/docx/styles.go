@@ -13,15 +13,15 @@ type Styles struct {
 
 // StyleDef defines a single style
 type StyleDef struct {
-	XMLName             xml.Name              `xml:"style"`
-	Type                string                `xml:"type,attr"`    // paragraph, character, table, numbering
-	StyleID             string                `xml:"styleId,attr"` // style identifier
-	Default             string                `xml:"default,attr"` // 1 if default style
-	Name                *StyleName            `xml:"name"`
-	BasedOn             *BasedOn              `xml:"basedOn"`
-	Next                *Next                 `xml:"next"`
-	ParagraphProperties *ParagraphProperties  `xml:"pPr"`
-	RunProperties       *RunProperties        `xml:"rPr"`
+	XMLName             xml.Name             `xml:"style"`
+	Type                string               `xml:"type,attr"`    // paragraph, character, table, numbering
+	StyleID             string               `xml:"styleId,attr"` // style identifier
+	Default             string               `xml:"default,attr"` // 1 if default style
+	Name                *StyleName           `xml:"name"`
+	BasedOn             *BasedOn             `xml:"basedOn"`
+	Next                *Next                `xml:"next"`
+	ParagraphProperties *ParagraphProperties `xml:"pPr"`
+	RunProperties       *RunProperties       `xml:"rPr"`
 }
 
 // StyleName contains the style's display name
@@ -134,19 +134,19 @@ type Numbering struct {
 
 // AbstractNum defines an abstract numbering definition
 type AbstractNum struct {
-	XMLName       xml.Name       `xml:"abstractNum"`
-	AbstractNumID int            `xml:"abstractNumId,attr"`
-	Levels        []NumberLevel  `xml:"lvl"`
+	XMLName       xml.Name      `xml:"abstractNum"`
+	AbstractNumID int           `xml:"abstractNumId,attr"`
+	Levels        []NumberLevel `xml:"lvl"`
 }
 
 // NumberLevel defines a numbering level
 type NumberLevel struct {
-	XMLName   xml.Name    `xml:"lvl"`
-	ILevel    int         `xml:"ilvl,attr"`
-	Start     *NumStart   `xml:"start"`
-	NumFmt    *NumFmt     `xml:"numFmt"`
-	LvlText   *LvlText    `xml:"lvlText"`
-	LvlJc     *LvlJc      `xml:"lvlJc"`
+	XMLName     xml.Name     `xml:"lvl"`
+	ILevel      int          `xml:"ilvl,attr"`
+	Start       *NumStart    `xml:"start"`
+	NumFmt      *NumFmt      `xml:"numFmt"`
+	LvlText     *LvlText     `xml:"lvlText"`
+	LvlJc       *LvlJc       `xml:"lvlJc"`
 	Indentation *Indentation `xml:"pPr>ind"`
 }
 
@@ -172,8 +172,8 @@ type LvlJc struct {
 
 // Num maps a numId to an abstractNumId
 type Num struct {
-	XMLName       xml.Name `xml:"num"`
-	NumID         int      `xml:"numId,attr"`
+	XMLName       xml.Name          `xml:"num"`
+	NumID         int               `xml:"numId,attr"`
 	AbstractNumID *AbstractNumIDRef `xml:"abstractNumId"`
 }
 

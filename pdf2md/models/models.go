@@ -7,13 +7,13 @@ import (
 
 // TextItem represents a text element extracted from PDF
 type TextItem struct {
-	X             float64
-	Y             float64
-	Width         float64
-	Height        float64
-	Text          string
-	Font          string
-	LineFormat    *WordFormat
+	X              float64
+	Y              float64
+	Width          float64
+	Height         float64
+	Text           string
+	Font           string
+	LineFormat     *WordFormat
 	UnopenedFormat *WordFormat
 	UnclosedFormat *WordFormat
 }
@@ -161,13 +161,13 @@ type ParseResult struct {
 
 // Globals contains global statistics about the document
 type Globals struct {
-	MostUsedHeight           int
-	MostUsedFont             string
-	MostUsedDistance         int
-	MaxHeight                int
-	MaxHeightFont            string
-	FontToFormats            map[string]*WordFormat
-	TOCPages                 []int
+	MostUsedHeight            int
+	MostUsedFont              string
+	MostUsedDistance          int
+	MaxHeight                 int
+	MaxHeightFont             string
+	FontToFormats             map[string]*WordFormat
+	TOCPages                  []int
 	HeadlineTypeToHeightRange map[string]*HeightRange
 }
 

@@ -96,4 +96,3 @@ func formatToExtension(format string) string {
 		return ".bin"
 	}
 }
-

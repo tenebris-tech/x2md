@@ -6,11 +6,11 @@ import (
 
 // BlockType represents a markdown block type
 type BlockType struct {
-	Name                                    string
-	Headline                                bool
-	HeadlineLevel                           int
-	MergeToBlock                            bool
-	MergeFollowingNonTypedItems             bool
+	Name                                         string
+	Headline                                     bool
+	HeadlineLevel                                int
+	MergeToBlock                                 bool
+	MergeFollowingNonTypedItems                  bool
 	MergeFollowingNonTypedItemsWithSmallDistance bool
 }
 
