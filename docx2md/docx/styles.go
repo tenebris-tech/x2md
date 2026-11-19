@@ -1,7 +1,13 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package docx
 
 import (
 	"encoding/xml"
+	"strconv"
 	"strings"
 )
 
@@ -269,7 +275,7 @@ func (n *Numbering) GetListPrefix(numID, level, itemNum int) string {
 func formatNumber(n int, format string) string {
 	switch format {
 	case "decimal":
-		return string(rune('0' + n%10))
+		return strconv.Itoa(n)
 	case "lowerLetter":
 		if n >= 1 && n <= 26 {
 			return string(rune('a' + n - 1))
@@ -285,7 +291,7 @@ func formatNumber(n int, format string) string {
 	case "upperRoman":
 		return toRoman(n, true)
 	default:
-		return string(rune('0' + n%10))
+		return strconv.Itoa(n)
 	}
 }
 

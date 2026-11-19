@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package docx provides DOCX file parsing functionality
 package docx
 

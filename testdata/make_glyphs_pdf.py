@@ -1,3 +1,8 @@
+# ******************************************************************************
+# * Copyright (c) 2026 Tenebris Technologies Inc.                              *
+# * Please see LICENSE file for details.                                       *
+# ******************************************************************************
+
 """Generates glyphs.pdf: a page that draws every glyph with its own show-text
 operation and no space characters, the way some PDF producers do.
 

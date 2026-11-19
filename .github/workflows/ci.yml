@@ -1,3 +1,8 @@
+# ******************************************************************************
+# * Copyright (c) 2026 Tenebris Technologies Inc.                              *
+# * Please see LICENSE file for details.                                       *
+# ******************************************************************************
+
 name: CI
 
 on:
@@ -13,9 +18,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build
-        run: go build ./...
-      - name: Vet
-        run: go vet ./...
       - name: Test
-        run: go test ./...
+        run: make test
+      - name: Build
+        run: make build

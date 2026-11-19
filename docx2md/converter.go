@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package docx2md provides a pure Go library to convert DOCX files to Markdown
 package docx2md
 

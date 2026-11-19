@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package pdf2md provides a pure Go library to convert PDF files to Markdown
 package pdf2md
 

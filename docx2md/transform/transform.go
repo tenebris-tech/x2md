@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package transform provides the transformation pipeline for DOCX to Markdown conversion
 package transform
 

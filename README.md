@@ -404,13 +404,19 @@ err := converter.ConvertFileToFile("input.xlsx", "output.md")
 
 ## Development
 
-### Building
+### Building and Testing
 
 ```bash
-go build -o x2md ./cli
-go test ./...
-go vet ./...
+make              # run the full test suite, then build bin/x2md if it passed
+make test         # run the full test suite (the gate for developers and CI)
+make build        # build bin/x2md without running tests
+make clean        # remove build output and drop the Go test cache
+make fmt          # rewrite Go files with gofmt (make test only verifies)
 ```
+
+`make test` runs `test.sh`, which verifies formatting, runs `go vet`, runs `go test -race -count=1 ./...`, then drives the compiled CLI against the documents in `testdata/` and checks its output, exit codes and error messages. It ends with a summary and exits non-zero if anything failed. It needs Go and a C compiler (for the race detector) and nothing else. `./test.sh -k` keeps the work directory for debugging; `-n` or `NO_COLOR` turns colour off.
+
+`make test-private` runs the tests that need the private document corpus in `private/`, which is not in the repository. It fails, naming the file, if a document is missing.
 
 ### Cross-Compilation
 

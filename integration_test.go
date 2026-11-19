@@ -1,3 +1,10 @@
+//go:build private
+
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package main
 
 import (
@@ -11,8 +18,10 @@ import (
 	"github.com/tenebris-tech/x2md/xlsx2md"
 )
 
-// Integration tests for x2md converter
-// These tests use files in private/ directory if available
+// Integration tests against the private document corpus in private/, which is
+// not part of the repository. They are excluded from the normal test run by
+// the "private" build tag and run with "make test-private", which fails if a
+// file is missing rather than skipping the test.
 
 func TestPDFConversion(t *testing.T) {
 	tests := []struct {
@@ -46,7 +55,7 @@ func TestPDFConversion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if _, err := os.Stat(tt.file); os.IsNotExist(err) {
-				t.Skipf("Test file not available: %s", tt.file)
+				t.Fatalf("missing prerequisite: %s", tt.file)
 			}
 
 			data, err := os.ReadFile(tt.file)
@@ -128,7 +137,7 @@ func TestDOCXConversion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if _, err := os.Stat(tt.file); os.IsNotExist(err) {
-				t.Skipf("Test file not available: %s", tt.file)
+				t.Fatalf("missing prerequisite: %s", tt.file)
 			}
 
 			data, err := os.ReadFile(tt.file)
@@ -157,7 +166,7 @@ func TestDOCXConversion(t *testing.T) {
 func TestXLSXConversion(t *testing.T) {
 	file := "private/ISO/ControlEvidence/Evidence/DCF153-Cond_Cont_Self/Evidence Library (manual evidences only)/Internal-Audit/20241212EPSISO27001InternalAudit-FinalReport.xlsx.xlsx"
 	if _, err := os.Stat(file); os.IsNotExist(err) {
-		t.Skipf("Test file not available: %s", file)
+		t.Fatalf("missing prerequisite: %s", file)
 	}
 
 	data, err := os.ReadFile(file)
@@ -183,7 +192,7 @@ func TestDOCXParagraphSeparation(t *testing.T) {
 	// Regression test for paragraph separation fix (commit 0b7f0c8)
 	file := "private/20240821 SOC Gap Letter.docx"
 	if _, err := os.Stat(file); os.IsNotExist(err) {
-		t.Skipf("Test file not available: %s", file)
+		t.Fatalf("missing prerequisite: %s", file)
 	}
 
 	data, err := os.ReadFile(file)
@@ -213,7 +222,7 @@ func TestDOCXFootnoteContent(t *testing.T) {
 	// Regression test for footnote content corruption fix (commit e469989)
 	file := "private/4_CSSP Project W7714-196635_001_SL_NG9-1-1 PSAP SOC Proof of Concept Report_26Jun2023(Final)-EJ.docx"
 	if _, err := os.Stat(file); os.IsNotExist(err) {
-		t.Skipf("Test file not available: %s", file)
+		t.Fatalf("missing prerequisite: %s", file)
 	}
 
 	data, err := os.ReadFile(file)
@@ -252,7 +261,7 @@ func TestEncryptedPDFHandling(t *testing.T) {
 	// can now be decrypted. Only PDFs with unknown passwords should fail.
 	file := "private/itsg33-ann3a-eng.pdf"
 	if _, err := os.Stat(file); os.IsNotExist(err) {
-		t.Skipf("Test file not available: %s", file)
+		t.Fatalf("missing prerequisite: %s", file)
 	}
 
 	data, err := os.ReadFile(file)
@@ -280,7 +289,7 @@ func TestEncryptedPDFHandling(t *testing.T) {
 func TestPDFTableDetection(t *testing.T) {
 	file := "private/CPP_ND_V3.0E.pdf"
 	if _, err := os.Stat(file); os.IsNotExist(err) {
-		t.Skipf("Test file not available: %s", file)
+		t.Fatalf("missing prerequisite: %s", file)
 	}
 
 	data, err := os.ReadFile(file)
@@ -308,7 +317,7 @@ func TestPDFTableDetection(t *testing.T) {
 func TestPDFHeaderDetection(t *testing.T) {
 	file := "private/basic-text.pdf"
 	if _, err := os.Stat(file); os.IsNotExist(err) {
-		t.Skipf("Test file not available: %s", file)
+		t.Fatalf("missing prerequisite: %s", file)
 	}
 
 	data, err := os.ReadFile(file)
@@ -344,7 +353,7 @@ func TestImageExtraction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if _, err := os.Stat(tt.file); os.IsNotExist(err) {
-				t.Skipf("Test file not available: %s", tt.file)
+				t.Fatalf("missing prerequisite: %s", tt.file)
 			}
 
 			data, err := os.ReadFile(tt.file)
@@ -384,7 +393,7 @@ func TestImageExtraction(t *testing.T) {
 func TestLargePDFPerformance(t *testing.T) {
 	file := "private/AFCEA IT Security Course - Security Assurance - Jacksch.pdf"
 	if _, err := os.Stat(file); os.IsNotExist(err) {
-		t.Skipf("Test file not available: %s", file)
+		t.Fatalf("missing prerequisite: %s", file)
 	}
 
 	// Skip in short mode

@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package models contains the data structures for PDF to Markdown conversion
 package models
 
