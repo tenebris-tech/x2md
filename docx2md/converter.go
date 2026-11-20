@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package docx2md provides a pure Go library to convert DOCX files to Markdown
 package docx2md
 
@@ -9,6 +14,7 @@ import (
 	"github.com/tenebris-tech/x2md/docx2md/docx"
 	"github.com/tenebris-tech/x2md/docx2md/transform"
 	"github.com/tenebris-tech/x2md/imageutil"
+	"github.com/tenebris-tech/x2md/internal/source"
 	"github.com/tenebris-tech/x2md/pdf2md/models"
 )
 
@@ -25,8 +31,10 @@ type Options struct {
 	// PreserveImages includes image references in output
 	PreserveImages bool
 
-	// PageSeparator is the separator between sections (currently unused as DOCX has no pages)
-	PageSeparator string
+	// ParagraphMarkers emits "<!-- para N -->" comments in the output, where N
+	// is the 1-based position of a paragraph in the document body, so that a
+	// reader of the Markdown can locate a passage in the original document.
+	ParagraphMarkers bool
 
 	// ExtractHeadersFooters includes document headers and footers in output
 	ExtractHeadersFooters bool
@@ -47,7 +55,7 @@ func DefaultOptions() *Options {
 	return &Options{
 		PreserveFormatting: true,
 		PreserveImages:     true,
-		PageSeparator: "\n",
+		ParagraphMarkers:   true,
 	}
 }
 
@@ -65,10 +73,15 @@ func WithPreserveImages(preserve bool) Option {
 	}
 }
 
-// WithPageSeparator sets the separator between sections
-func WithPageSeparator(sep string) Option {
+// WithParagraphMarkers enables or disables paragraph markers in the output.
+// When enabled (the default), the output starts with a comment describing the
+// convention, and "<!-- para N -->" precedes every heading and table and
+// appears at least every ten paragraphs elsewhere. N counts every paragraph of
+// the document body in order, including paragraphs inside table cells; the
+// content after a marker starts at paragraph N.
+func WithParagraphMarkers(enabled bool) Option {
 	return func(o *Options) {
-		o.PageSeparator = sep
+		o.ParagraphMarkers = enabled
 	}
 }
 
@@ -102,16 +115,22 @@ func New(opts ...Option) *Converter {
 	return &Converter{options: options}
 }
 
-// ConvertFile converts a DOCX file to Markdown
+// ConvertFile converts a DOCX file to Markdown.
+// The output starts with a comment giving the absolute path of the input file.
 func (c *Converter) ConvertFile(inputPath string) (string, error) {
 	data, err := os.ReadFile(inputPath)
 	if err != nil {
 		return "", fmt.Errorf("reading file: %w", err)
 	}
-	return c.Convert(data)
+	markdown, err := c.Convert(data)
+	if err != nil {
+		return "", err
+	}
+	return source.Prepend(markdown, inputPath), nil
 }
 
-// ConvertFileToFile converts a DOCX file and writes the result to a file
+// ConvertFileToFile converts a DOCX file and writes the result to a file.
+// The output starts with a comment giving the absolute path of the input file.
 func (c *Converter) ConvertFileToFile(inputPath, outputPath string) error {
 	// Read input file
 	data, err := os.ReadFile(inputPath)
@@ -133,6 +152,7 @@ func (c *Converter) ConvertFileToFile(inputPath, outputPath string) error {
 		}
 	}
 
+	markdown = source.Prepend(markdown, inputPath)
 	return os.WriteFile(outputPath, []byte(markdown), 0644)
 }
 
@@ -222,12 +242,20 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 	// Run transformation pipeline
 	pipelineOpts := &transform.PipelineOptions{
 		PreserveFormatting: c.options.PreserveFormatting,
+		ParagraphMarkers:   c.options.ParagraphMarkers,
 	}
 	pipeline := transform.NewPipeline(pipelineOpts)
 	result := pipeline.Transform(page)
 
 	// Combine output
 	var output strings.Builder
+
+	// Explain the paragraph marker convention to whoever reads the output
+	if c.options.ParagraphMarkers {
+		output.WriteString("<!-- x2md: converted from a DOCX. " +
+			"A \"para N\" comment means the content after it starts at paragraph N of the document body, " +
+			"counting every paragraph in order including those in table cells. -->\n\n")
+	}
 
 	// Add headers if requested
 	if c.options.ExtractHeadersFooters {

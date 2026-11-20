@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package transform
 
 import (
@@ -31,11 +36,19 @@ func (t *ToTextBlocks) Transform(result *models.ParseResult) *models.ParseResult
 			category := "paragraph"
 			if block.Type != nil {
 				category = block.Type.Name
+			} else if isTableBlock(block) {
+				category = "TABLE"
+			}
+
+			paragraph := 0
+			if len(block.Items) > 0 {
+				paragraph = block.Items[0].Paragraph
 			}
 
 			newItems = append(newItems, &models.TextBlock{
-				Category: category,
-				Text:     text,
+				Category:  category,
+				Text:      text,
+				Paragraph: paragraph,
 			})
 		}
 

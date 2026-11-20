@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package pdf
 
 import (
@@ -6,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // TextItem represents an extracted text element with position
@@ -16,6 +22,15 @@ type TextItem struct {
 	Height float64
 	Text   string
 	Font   string
+
+	// advance is the width of the text on the page (Width is in text space,
+	// before the text matrix scale is applied). Set for single show-text
+	// operations only; zero means unknown.
+	advance float64
+
+	// glyphRun marks text that began as a glyph fragment, which following
+	// fragments may be joined onto (see mergeGlyphRuns)
+	glyphRun bool
 }
 
 // Font represents a PDF font
@@ -79,7 +94,7 @@ func (e *TextExtractor) ExtractPage(pageIndex int) ([]TextItem, error) {
 		return nil, fmt.Errorf("parsing content: %w", err)
 	}
 
-	return items, nil
+	return mergeGlyphRuns(items), nil
 }
 
 // loadPageFonts loads all fonts used on a page
@@ -972,13 +987,116 @@ func (e *TextExtractor) showText(text string, gs *GraphicsState, mediaBox [4]flo
 	gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, width, 0}, gs.TextMatrix)
 
 	return TextItem{
-		X:      x,
-		Y:      y,
-		Width:  width,
-		Height: fontSize,
-		Text:   decodedText,
-		Font:   gs.FontName,
+		X:       x,
+		Y:       y,
+		Width:   width,
+		Height:  fontSize,
+		Text:    decodedText,
+		Font:    gs.FontName,
+		advance: width * math.Sqrt(tm[0]*tm[0]+tm[1]*tm[1]),
 	}
+}
+
+const (
+	// glyphRunMaxRunes is the longest text that is treated as a glyph
+	// fragment and joined onto the text before it
+	glyphRunMaxRunes = 3
+
+	// glyphRunMinShare is the share of a page's text items that must be
+	// glyph fragments for the page to count as drawn glyph by glyph
+	glyphRunMinShare = 0.8
+
+	// glyphRunMinItems is the fewest text items a page needs for that share
+	// to mean anything
+	glyphRunMinItems = 20
+
+	// glyphRunJoinGap is the largest gap, as a fraction of the font size,
+	// between two fragments of the same word
+	glyphRunJoinGap = 0.18
+
+	// glyphRunSpaceGap is the largest gap, as a fraction of the font size,
+	// that is a space between two words rather than a column gap
+	glyphRunSpaceGap = 0.6
+)
+
+// mergeGlyphRuns joins text that a PDF draws one glyph (or a few) at a time.
+//
+// Some producers position every glyph with its own show-text operation and
+// draw no space characters at all: words are separated only by a wider gap.
+// Left as separate items, the gaps are too small for later stages to tell
+// apart from kerning, and the words run together. Here the exact glyph
+// widths are still known, so fragments that touch are joined and a space is
+// inserted where the gap is the size of a word space.
+//
+// This applies only to pages drawn almost entirely that way, and only to
+// runs made up of short fragments. Pages that draw whole words or lines per
+// operation are returned unchanged, short fragments included.
+func mergeGlyphRuns(items []TextItem) []TextItem {
+	if !drawnGlyphByGlyph(items) {
+		return items
+	}
+
+	merged := make([]TextItem, 0, len(items))
+
+	for _, item := range items {
+		if len(merged) > 0 {
+			prev := &merged[len(merged)-1]
+			if gap, ok := glyphRunGap(prev, &item); ok {
+				if gap > glyphRunJoinGap*prev.Height && !strings.HasSuffix(prev.Text, " ") &&
+					!strings.HasPrefix(item.Text, " ") {
+					prev.Text += " "
+				}
+				prev.Text += item.Text
+				prev.advance = item.X + item.advance - prev.X
+				prev.Width = prev.advance
+				continue
+			}
+		}
+		item.glyphRun = isGlyphFragment(&item)
+		merged = append(merged, item)
+	}
+
+	return merged
+}
+
+// drawnGlyphByGlyph reports whether nearly all text on a page is drawn as
+// separate glyph fragments
+func drawnGlyphByGlyph(items []TextItem) bool {
+	if len(items) < glyphRunMinItems {
+		return false
+	}
+	fragments := 0
+	for i := range items {
+		if isGlyphFragment(&items[i]) {
+			fragments++
+		}
+	}
+	return float64(fragments) >= glyphRunMinShare*float64(len(items))
+}
+
+// isGlyphFragment reports whether an item is a glyph or two drawn on its own
+// with a known width
+func isGlyphFragment(item *TextItem) bool {
+	return item.advance > 0 && utf8.RuneCountInString(item.Text) <= glyphRunMaxRunes
+}
+
+// glyphRunGap returns the horizontal gap between two items if next is a
+// glyph fragment that continues the line of text prev is on
+func glyphRunGap(prev, next *TextItem) (float64, bool) {
+	if !prev.glyphRun || !isGlyphFragment(next) || prev.Height <= 0 {
+		return 0, false
+	}
+	if prev.Font != next.Font || math.Abs(prev.Height-next.Height) > 0.01*prev.Height {
+		return 0, false
+	}
+	if math.Abs(prev.Y-next.Y) > 0.1*prev.Height {
+		return 0, false
+	}
+	gap := next.X - (prev.X + prev.advance)
+	if gap < -glyphRunJoinGap*prev.Height || gap > glyphRunSpaceGap*prev.Height {
+		return 0, false
+	}
+	return gap, true
 }
 
 func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState, items []TextItem, mediaBox [4]float64) []TextItem {

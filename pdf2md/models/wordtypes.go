@@ -1,13 +1,18 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package models
 
 import "fmt"
 
 // WordType represents a special word type
 type WordType struct {
-	Name                   string
+	Name                    string
 	AttachWithoutWhitespace bool
-	PlainTextFormat        bool
-	toTextFunc             func(string) string
+	PlainTextFormat         bool
+	toTextFunc              func(string) string
 }
 
 // ToText converts the word to its text representation
@@ -27,9 +32,9 @@ var (
 		},
 	}
 	WordTypeFootnoteLink = &WordType{
-		Name:                   "FOOTNOTE_LINK",
+		Name:                    "FOOTNOTE_LINK",
 		AttachWithoutWhitespace: true,
-		PlainTextFormat:        true,
+		PlainTextFormat:         true,
 		toTextFunc: func(s string) string {
 			return fmt.Sprintf("[^%s]", s)
 		},
@@ -70,4 +75,3 @@ var (
 		EndSymbol:   "_**",
 	}
 )
-

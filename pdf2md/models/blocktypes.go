@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package models
 
 import (
@@ -6,11 +11,11 @@ import (
 
 // BlockType represents a markdown block type
 type BlockType struct {
-	Name                                    string
-	Headline                                bool
-	HeadlineLevel                           int
-	MergeToBlock                            bool
-	MergeFollowingNonTypedItems             bool
+	Name                                         string
+	Headline                                     bool
+	HeadlineLevel                                int
+	MergeToBlock                                 bool
+	MergeFollowingNonTypedItems                  bool
 	MergeFollowingNonTypedItemsWithSmallDistance bool
 }
 

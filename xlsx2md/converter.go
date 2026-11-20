@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package xlsx2md provides a pure Go library to convert XLSX files to Markdown
 package xlsx2md
 
@@ -7,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tenebris-tech/x2md/internal/source"
 	"github.com/tenebris-tech/x2md/xlsx2md/xlsx"
 )
 
@@ -102,16 +108,22 @@ func New(opts ...Option) *Converter {
 	return &Converter{options: options}
 }
 
-// ConvertFile converts an XLSX file to Markdown
+// ConvertFile converts an XLSX file to Markdown.
+// The output starts with a comment giving the absolute path of the input file.
 func (c *Converter) ConvertFile(inputPath string) (string, error) {
 	data, err := os.ReadFile(inputPath)
 	if err != nil {
 		return "", fmt.Errorf("reading file: %w", err)
 	}
-	return c.Convert(data)
+	markdown, err := c.Convert(data)
+	if err != nil {
+		return "", err
+	}
+	return source.Prepend(markdown, inputPath), nil
 }
 
-// ConvertFileToFile converts an XLSX file and writes the result to a file
+// ConvertFileToFile converts an XLSX file and writes the result to a file.
+// The output starts with a comment giving the absolute path of the input file.
 func (c *Converter) ConvertFileToFile(inputPath, outputPath string) error {
 	markdown, err := c.ConvertFile(inputPath)
 	if err != nil {

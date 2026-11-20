@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package transform
 
 import (
@@ -118,6 +123,7 @@ func (c *CalculateGlobalStats) Transform(result *models.ParseResult) *models.Par
 			Width:     page.Width,
 			Height:    page.Height,
 			IsScanned: page.IsScanned,
+			ScanImage: page.ScanImage,
 		}
 	}
 

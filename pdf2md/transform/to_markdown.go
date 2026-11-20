@@ -1,6 +1,12 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package transform
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -8,11 +14,42 @@ import (
 )
 
 // ToMarkdown converts text blocks to final markdown
-type ToMarkdown struct{}
+type ToMarkdown struct {
+	pageMarkers bool
+}
 
-// NewToMarkdown creates a new ToMarkdown transformation
-func NewToMarkdown() *ToMarkdown {
-	return &ToMarkdown{}
+// NewToMarkdown creates a new ToMarkdown transformation.
+// When pageMarkers is true, each page's content is preceded by a page marker.
+func NewToMarkdown(pageMarkers bool) *ToMarkdown {
+	return &ToMarkdown{pageMarkers: pageMarkers}
+}
+
+// Page markers are HTML comments on their own line. The number is the
+// 1-based physical page of the source document (what a viewer's "go to page"
+// uses), not the number printed on the page.
+//
+//	<!-- page 12 -->     content from here on starts on page 12
+//	<!-- pages 3-5 -->   the table that follows spans pages 3 to 5
+var pageMarkerPattern = regexp.MustCompile(`^<!-- pages? (\d+)(?:-\d+)? -->$`)
+
+// PageMarker returns the marker for a single 1-based page number
+func PageMarker(page int) string {
+	return fmt.Sprintf("<!-- page %d -->", page)
+}
+
+func pageRangeMarker(first, last int) string {
+	return fmt.Sprintf("<!-- pages %d-%d -->", first, last)
+}
+
+// parsePageMarker returns the (first) page number of a marker line
+func parsePageMarker(line string) (int, bool) {
+	m := pageMarkerPattern.FindStringSubmatch(line)
+	if m == nil {
+		return 0, false
+	}
+	var page int
+	fmt.Sscanf(m[1], "%d", &page)
+	return page, true
 }
 
 var newlinePattern = regexp.MustCompile(`(\r\n|\n|\r)`)
@@ -61,8 +98,17 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 			text.WriteString("\n\n")
 		}
 
-		// Set page items to just the text
-		page.Items = []interface{}{text.String()}
+		// Scanned pages have no text; reference the page image instead
+		if page.IsScanned && page.ScanImage != "" {
+			text.WriteString(fmt.Sprintf("![%s]\n\n", page.ScanImage))
+		}
+
+		// Set page items to just the text, preceded by the page marker
+		pageText := text.String()
+		if t.pageMarkers && pageText != "" {
+			pageText = PageMarker(page.Index+1) + "\n\n" + pageText
+		}
+		page.Items = []interface{}{pageText}
 	}
 
 	// Merge continuation tables across pages
@@ -88,9 +134,48 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 
 	// Merge consecutive table rows that are separated by empty lines
 	// Pattern: table row, newlines, table row (without header separator)
+	//
+	// A page marker cannot sit between the rows of a table without breaking
+	// it, so a marker that falls inside a continued table is held back: the
+	// table gets a page range marker in front of it, and the held marker is
+	// emitted after the table so that following content is attributed to
+	// the page the table ended on.
 	lines := strings.Split(fullText, "\n")
 	var mergedLines []string
 	var inContinuationTable bool
+	currentPage := 0    // Page of the last marker seen
+	tableStart := -1    // Index in mergedLines of the current table's first row
+	tableFirstPage := 0 // Page the current table started on
+	heldPage := 0       // Page of a marker held back inside the current table
+
+	// nextIsTableRow reports whether the next line with content after i,
+	// ignoring page markers, is a table data row
+	nextIsTableRow := func(i int) bool {
+		for j := i + 1; j < len(lines); j++ {
+			nextTrimmed := strings.TrimSpace(lines[j])
+			if nextTrimmed == "" {
+				continue
+			}
+			if _, ok := parsePageMarker(nextTrimmed); ok {
+				continue
+			}
+			return strings.HasPrefix(nextTrimmed, "|") && !strings.Contains(nextTrimmed, "---")
+		}
+		return false
+	}
+
+	// endTable closes the current table, emitting markers held back inside it
+	endTable := func() {
+		if heldPage > 0 && tableStart >= 0 {
+			rangeLines := []string{pageRangeMarker(tableFirstPage, heldPage), ""}
+			mergedLines = append(mergedLines[:tableStart],
+				append(rangeLines, mergedLines[tableStart:]...)...)
+			mergedLines = append(mergedLines, "", PageMarker(heldPage))
+		}
+		inContinuationTable = false
+		tableStart = -1
+		heldPage = 0
+	}
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -99,41 +184,47 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 		isTableRow := strings.HasPrefix(trimmed, "|") && !strings.Contains(trimmed, "---")
 		isSeparator := strings.HasPrefix(trimmed, "|") && strings.Contains(trimmed, "---")
 
-		if isTableRow {
-			if inContinuationTable && len(mergedLines) > 0 {
+		if page, ok := parsePageMarker(trimmed); ok {
+			if inContinuationTable && nextIsTableRow(i) {
+				// Table continues onto this page - hold the marker back
+				heldPage = page
+				currentPage = page
+				continue
+			}
+			if inContinuationTable {
+				endTable()
+			}
+			currentPage = page
+			mergedLines = append(mergedLines, line)
+		} else if isTableRow || isSeparator {
+			if isTableRow && inContinuationTable && len(mergedLines) > 0 {
 				// Remove trailing empty lines before appending this row
 				for len(mergedLines) > 0 && strings.TrimSpace(mergedLines[len(mergedLines)-1]) == "" {
 					mergedLines = mergedLines[:len(mergedLines)-1]
 				}
 			}
-			mergedLines = append(mergedLines, line)
-			inContinuationTable = true
-		} else if isSeparator {
+			if !inContinuationTable {
+				tableStart = len(mergedLines)
+				tableFirstPage = currentPage
+			}
 			mergedLines = append(mergedLines, line)
 			inContinuationTable = true
 		} else if trimmed == "" && inContinuationTable {
-			// Check if next non-empty line is a table row
-			nextTableRow := false
-			for j := i + 1; j < len(lines); j++ {
-				nextTrimmed := strings.TrimSpace(lines[j])
-				if nextTrimmed == "" {
-					continue
-				}
-				if strings.HasPrefix(nextTrimmed, "|") && !strings.Contains(nextTrimmed, "---") {
-					nextTableRow = true
-				}
-				break
-			}
-			if !nextTableRow {
+			if !nextIsTableRow(i) {
 				// End of table - add blank line
+				endTable()
 				mergedLines = append(mergedLines, line)
-				inContinuationTable = false
 			}
 			// If next is table row, skip this empty line (continuation)
 		} else {
-			inContinuationTable = false
+			if inContinuationTable {
+				endTable()
+			}
 			mergedLines = append(mergedLines, line)
 		}
+	}
+	if inContinuationTable {
+		endTable()
 	}
 
 	mergedText := strings.Join(mergedLines, "\n")

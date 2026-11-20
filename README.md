@@ -52,6 +52,7 @@ x2md -v document.pdf
 | `-strip-blank-pages` | Remove blank pages (PDF only) |
 | `-no-lists` | Disable list detection (PDF only) |
 | `-no-headings` | Disable heading detection (PDF only) |
+| `-no-location-markers` | Do not emit `<!-- page N -->` (PDF) or `<!-- para N -->` (DOCX) markers |
 | `-no-scan-mode` | Disable automatic scanned page detection (PDF only) |
 
 ---
@@ -151,6 +152,16 @@ type Result struct {
 
 ## Document Formats
 
+### Source Path
+
+When converting from a file (`ConvertFile`, `ConvertFileToFile`, the CLI and the `convert` package), the first line of the Markdown is a comment with the absolute path of the original file, as it was at conversion time:
+
+```markdown
+<!-- source: /home/user/docs/report.pdf -->
+```
+
+Conversions from in-memory data (`Convert`, `ConvertWithImages`) have no path and no such line.
+
 x2md supports multiple document formats. Each format has its own package that can be used directly for more control, or through the unified `convert` package.
 
 - **PDF** - Text-based and scanned PDF documents (`pdf2md`)
@@ -169,6 +180,7 @@ The `pdf2md` package converts PDF documents to Markdown.
 - Automatic scanned page detection - extracts page images for OCR/LLM processing
 - Image extraction (JPEG and PNG)
 - Multi-page table handling with header deduplication
+- Page markers so content can be traced back to its physical PDF page
 - Footnote detection
 - Bold/italic text formatting
 - Encrypted PDF detection with clear error message
@@ -212,7 +224,24 @@ markdown, images, err := converter.ConvertWithImages(data)
 | `WithPreserveFormatting(bool)` | Preserve bold/italic | true |
 | `WithExtractImages(bool)` | Extract images | true |
 | `WithCompact(bool)` | Remove excessive blank lines | false |
-| `WithPageSeparator(string)` | Separator between pages | "\n" |
+| `WithPageMarkers(bool)` | Emit `<!-- page N -->` before each page's content | true |
+
+#### Page Markers
+
+So that a reader of the Markdown (typically an LLM) can cite where a passage came from, each page's content is preceded by a marker:
+
+```markdown
+<!-- page 12 -->
+
+Text that starts on page 12...
+```
+
+- `N` is the 1-based physical page of the PDF (the number a viewer's "go to page" or a `file.pdf#page=N` link uses), not the number printed on the page. Stripped blank pages do not shift the numbering.
+- To find the page of a passage, look upward for the nearest marker.
+- A table that continues across pages is preceded by `<!-- pages 3-5 -->`, because a comment between table rows would break the table. The marker for the last page follows the table.
+- The output starts with a one-line comment describing this convention (after the source path line).
+
+Disable with `WithPageMarkers(false)` or `-no-location-markers`.
 
 #### Scanned PDF Handling
 
@@ -263,6 +292,7 @@ The `docx2md` package converts Microsoft Word documents to Markdown.
 - Hyperlink conversion to markdown syntax
 - Footnotes and endnotes
 - Image extraction from embedded media
+- Paragraph markers so content can be traced back to its place in the document
 
 #### Simple Usage
 
@@ -298,7 +328,24 @@ markdown, images, err := converter.ConvertWithImages(data)
 | `WithPreserveImages(bool)` | Extract and include images | true |
 | `WithExtractHeadersFooters(bool)` | Include document headers/footers | false |
 | `WithCompact(bool)` | Remove excessive blank lines | false |
-| `WithPageSeparator(string)` | Separator between sections | "\n" |
+| `WithParagraphMarkers(bool)` | Emit `<!-- para N -->` location markers | true |
+
+#### Paragraph Markers
+
+A DOCX has no fixed pages, so content is located by paragraph number instead:
+
+```markdown
+<!-- para 57 -->
+
+## 3.2 Scope
+```
+
+- `N` is the 1-based position of a paragraph in the document body, counting every paragraph (`w:p`) in order, including paragraphs inside table cells and empty ones. Text box content stored twice for compatibility (`mc:Fallback`) is counted once.
+- The content after a marker starts at paragraph N. A marker precedes every heading and table, and appears at least every ten paragraphs elsewhere.
+- To locate a passage, take the nearest marker above it and search for the passage's text from that paragraph on. A viewer that renders the DOCX to HTML one element per paragraph can scroll to the Nth paragraph directly.
+- The output starts with a one-line comment describing this convention (after the source path line).
+
+Disable with `WithParagraphMarkers(false)` or `-no-location-markers`.
 
 #### Image Extraction
 
@@ -357,13 +404,19 @@ err := converter.ConvertFileToFile("input.xlsx", "output.md")
 
 ## Development
 
-### Building
+### Building and Testing
 
 ```bash
-go build -o x2md ./cli
-go test ./...
-go vet ./...
+make              # run the full test suite, then build bin/x2md if it passed
+make test         # run the full test suite (the gate for developers and the build system)
+make build        # build bin/x2md without running tests
+make clean        # remove build output and drop the Go test cache
+make fmt          # rewrite Go files with gofmt (make test only verifies)
 ```
+
+`make test` runs `test.sh`, which verifies formatting, runs `go vet`, runs `go test -race -count=1 ./...`, then drives the compiled CLI against the documents in `testdata/` and checks its output, exit codes and error messages. It ends with a summary and exits non-zero if anything failed. It needs Go and a C compiler (for the race detector) and nothing else. `./test.sh -k` keeps the work directory for debugging; `-n` or `NO_COLOR` turns colour off.
+
+`make test-private` runs the tests that need the private document corpus in `private/`, which is not in the repository. It fails, naming the file, if a document is missing.
 
 ### Cross-Compilation
 

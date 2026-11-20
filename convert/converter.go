@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package convert provides a unified API for converting documents to Markdown.
 // It wraps the pdf2md, docx2md, and xlsx2md packages and adds support for batch processing,
 // recursive directory traversal, and output directory management.

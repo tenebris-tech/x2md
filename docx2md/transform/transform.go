@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package transform provides the transformation pipeline for DOCX to Markdown conversion
 package transform
 
@@ -9,6 +14,9 @@ import (
 type PipelineOptions struct {
 	// PreserveFormatting keeps bold/italic formatting
 	PreserveFormatting bool
+
+	// ParagraphMarkers emits <!-- para N --> markers in the output
+	ParagraphMarkers bool
 }
 
 // Transformation is the interface for pipeline steps
@@ -35,7 +43,7 @@ func NewPipeline(opts *PipelineOptions) *Pipeline {
 		transformations: []Transformation{
 			NewGatherBlocks(),
 			NewToTextBlocks(),
-			NewToMarkdown(),
+			NewToMarkdown(opts.ParagraphMarkers),
 		},
 	}
 }

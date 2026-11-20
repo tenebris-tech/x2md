@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package models contains the data structures for PDF to Markdown conversion
 package models
 
@@ -7,13 +12,13 @@ import (
 
 // TextItem represents a text element extracted from PDF
 type TextItem struct {
-	X             float64
-	Y             float64
-	Width         float64
-	Height        float64
-	Text          string
-	Font          string
-	LineFormat    *WordFormat
+	X              float64
+	Y              float64
+	Width          float64
+	Height         float64
+	Text           string
+	Font           string
+	LineFormat     *WordFormat
 	UnopenedFormat *WordFormat
 	UnclosedFormat *WordFormat
 }
@@ -25,6 +30,7 @@ type Page struct {
 	Width     float64       // Page width in points
 	Height    float64       // Page height in points
 	IsScanned bool          // Whether this page is a scanned image
+	ScanImage string        // Image ID of the page scan, if IsScanned and an image was extracted
 }
 
 // Word represents a word with optional formatting
@@ -51,6 +57,8 @@ type LineItem struct {
 	TableColumns  []string // Text content of each column (for table rows)
 	// List-related fields
 	ListLevel int // 0-based nesting level for list items
+	// Source position
+	Paragraph int // 1-based paragraph number in the source document (DOCX), 0 if unknown
 }
 
 // Text returns the text content of the line
@@ -77,6 +85,7 @@ func (l *LineItem) Copy() *LineItem {
 		IsTableHeader:  l.IsTableHeader,
 		TableColumns:   append([]string{}, l.TableColumns...),
 		ListLevel:      l.ListLevel,
+		Paragraph:      l.Paragraph,
 	}
 }
 
@@ -157,13 +166,13 @@ type ParseResult struct {
 
 // Globals contains global statistics about the document
 type Globals struct {
-	MostUsedHeight           int
-	MostUsedFont             string
-	MostUsedDistance         int
-	MaxHeight                int
-	MaxHeightFont            string
-	FontToFormats            map[string]*WordFormat
-	TOCPages                 []int
+	MostUsedHeight            int
+	MostUsedFont              string
+	MostUsedDistance          int
+	MaxHeight                 int
+	MaxHeightFont             string
+	FontToFormats             map[string]*WordFormat
+	TOCPages                  []int
 	HeadlineTypeToHeightRange map[string]*HeightRange
 }
 
@@ -188,8 +197,9 @@ var (
 
 // TextBlock represents a text block for final output
 type TextBlock struct {
-	Category string
-	Text     string
+	Category  string
+	Text      string
+	Paragraph int // 1-based paragraph number of the block's first line (DOCX), 0 if unknown
 }
 
 // ImageItem represents an extracted image from a document

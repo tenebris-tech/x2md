@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright (c) 2025-2026 Tenebris Technologies Inc.                         *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package pdf provides low-level PDF parsing functionality
 package pdf
 
@@ -25,16 +30,16 @@ const (
 // EncryptionHandler handles PDF decryption for permission-restricted PDFs
 type EncryptionHandler struct {
 	// Encryption parameters from /Encrypt dictionary
-	V          int    // Version (1, 2, 3, 4, or 5)
-	R          int    // Revision (2, 3, 4, 5, or 6)
-	KeyLength  int    // Key length in bits (40-256)
-	P          int32  // Permissions flags
-	O          []byte // Owner password hash (32 or 48 bytes)
-	U          []byte // User password hash (32 or 48 bytes)
-	OE         []byte // Owner encryption key (AES-256, R=6)
-	UE         []byte // User encryption key (AES-256, R=6)
-	Perms      []byte // Permissions (AES-256, R=6)
-	EncryptMeta bool  // Whether metadata is encrypted
+	V           int    // Version (1, 2, 3, 4, or 5)
+	R           int    // Revision (2, 3, 4, 5, or 6)
+	KeyLength   int    // Key length in bits (40-256)
+	P           int32  // Permissions flags
+	O           []byte // Owner password hash (32 or 48 bytes)
+	U           []byte // User password hash (32 or 48 bytes)
+	OE          []byte // Owner encryption key (AES-256, R=6)
+	UE          []byte // User encryption key (AES-256, R=6)
+	Perms       []byte // Permissions (AES-256, R=6)
+	EncryptMeta bool   // Whether metadata is encrypted
 
 	// Crypt filter settings (V4+)
 	StmF CryptMethod // Stream filter method
