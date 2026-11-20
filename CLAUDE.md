@@ -186,6 +186,7 @@ Per OOXML specification, text runs (`<w:r>`) concatenate directly without implic
 - `Numbering.GetListPrefix()` - Returns prefix based on numFmt (bullet, decimal, etc.)
 - Supports: bullet, decimal, lowerLetter, upperLetter, lowerRoman, upperRoman
 - Nested lists use indentation level (`ilvl`)
+- A paragraph without its own `numPr` takes numbering from its style: `Styles.ResolveNumPr()` follows `basedOn`, and `Extractor.resolveNumbering()` merges it with the paragraph's own values (`numId` 0 switches numbering off; a heading whose style is numbered stays a heading)
 
 #### Hyperlink Handling (`docx2md/docx/relationships.go`)
 - Hyperlinks reference relationships by ID (`r:id`)

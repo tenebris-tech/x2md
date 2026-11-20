@@ -538,23 +538,20 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 	}
 
 	// Determine block type from style
+	isHeading := false
 	if styleID != "" {
-		isHeading, level := e.styles.IsHeading(styleID)
+		var level int
+		isHeading, level = e.styles.IsHeading(styleID)
 		if isHeading {
 			lineItem.Type = models.HeadlineByLevel(level)
 		}
 	}
 
-	// Handle list items
-	if numPr != nil && numPr.NumID != nil {
+	// Handle list items. Numbering comes from the paragraph's own numPr or,
+	// failing that, from its style. A numbered heading style stays a heading.
+	numID, level, isList := e.resolveNumbering(styleID, numPr, isHeading)
+	if isList {
 		lineItem.Type = models.BlockTypeList
-
-		// Get list prefix
-		numID := numPr.NumID.Val
-		level := 0
-		if numPr.ILevel != nil {
-			level = numPr.ILevel.Val
-		}
 
 		// Track counters
 		if e.listCounters[numID] == nil {
@@ -576,6 +573,36 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 	}
 
 	return lineItem
+}
+
+// resolveNumbering returns the numbering instance and level that apply to a
+// paragraph. Values on the paragraph's own numPr take precedence; whatever it
+// leaves unspecified is taken from the paragraph style, following basedOn.
+// A numId of 0 means numbering is switched off (ECMA-376 17.9.18).
+func (e *Extractor) resolveNumbering(styleID string, numPr *NumberingPr, isHeading bool) (numID, level int, ok bool) {
+	var id *NumID
+	var lvl *ILevel
+	if numPr != nil {
+		id, lvl = numPr.NumID, numPr.ILevel
+	}
+
+	// A heading whose style is numbered stays a heading
+	if id == nil && styleID != "" && !isHeading {
+		if styleNumPr := e.styles.ResolveNumPr(styleID); styleNumPr != nil {
+			id = styleNumPr.NumID
+			if lvl == nil {
+				lvl = styleNumPr.ILevel
+			}
+		}
+	}
+
+	if id == nil || id.Val == 0 {
+		return 0, 0, false
+	}
+	if lvl != nil {
+		level = lvl.Val
+	}
+	return id.Val, level, true
 }
 
 // getWordFormat returns the word format for given formatting flags

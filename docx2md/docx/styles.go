@@ -55,6 +55,41 @@ func (s *Styles) GetStyle(id string) *StyleDef {
 	return nil
 }
 
+// ResolveNumPr returns the numbering properties a paragraph style applies,
+// following basedOn inheritance. The nearest style in the chain that carries
+// a numPr decides: its numId is used, and if it specifies only a level, the
+// numId is taken from the nearest ancestor that has one. A level is never
+// inherited from an ancestor past the style that supplies the numId. The
+// result is nil when no style in the chain supplies a numId; a numId of 0
+// (numbering switched off) is returned as-is for the caller to interpret.
+func (s *Styles) ResolveNumPr(styleID string) *NumberingPr {
+	var level *ILevel
+	visited := make(map[string]bool)
+
+	for styleID != "" && !visited[styleID] {
+		visited[styleID] = true
+		style := s.GetStyle(styleID)
+		if style == nil {
+			return nil
+		}
+
+		if pPr := style.ParagraphProperties; pPr != nil && pPr.NumPr != nil {
+			if level == nil {
+				level = pPr.NumPr.ILevel
+			}
+			if pPr.NumPr.NumID != nil {
+				return &NumberingPr{NumID: pPr.NumPr.NumID, ILevel: level}
+			}
+		}
+
+		if style.BasedOn == nil {
+			return nil
+		}
+		styleID = style.BasedOn.Val
+	}
+	return nil
+}
+
 // IsHeading checks if a style is a heading and returns the level (1-6)
 func (s *Styles) IsHeading(styleID string) (bool, int) {
 	style := s.GetStyle(styleID)
