@@ -8,6 +8,7 @@ package pdf
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -47,10 +48,15 @@ type Font struct {
 
 // TextExtractor extracts text from PDF pages
 type TextExtractor struct {
-	parser    *Parser
-	fonts     map[string]*Font
-	xobjects  map[string]*Object // Form XObjects for current page
-	pageIndex int
+	parser   *Parser
+	fonts    map[string]*Font
+	xobjects map[string]*Object // Form XObjects for current page
+
+	// xobjectFonts holds the fonts each Form XObject on the current page
+	// declares in its own resources, by XObject name then font name. A form's
+	// font names are its own: two forms may both call a different font "F1".
+	xobjectFonts map[string]map[string]*Font
+	pageIndex    int
 }
 
 // NewTextExtractor creates a new text extractor
@@ -228,6 +234,7 @@ func (e *TextExtractor) getResources(page *Object) map[string]interface{} {
 func (e *TextExtractor) loadPageXObjects(page *Object) {
 	// Clear previous page's XObjects
 	e.xobjects = make(map[string]*Object)
+	e.xobjectFonts = make(map[string]map[string]*Font)
 
 	resources := e.getResources(page)
 	if resources == nil {
@@ -253,8 +260,16 @@ func (e *TextExtractor) loadPageXObjects(page *Object) {
 		return
 	}
 
-	for name, ref := range xobjectDict {
-		if r, ok := ref.(*Reference); ok {
+	// Visit the XObjects in name order, so that which form's font ends up in
+	// the document-wide font map does not depend on map iteration order
+	names := make([]string, 0, len(xobjectDict))
+	for name := range xobjectDict {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		if r, ok := xobjectDict[name].(*Reference); ok {
 			obj, err := e.parser.GetObject(r.ObjectNum)
 			if err != nil {
 				continue
@@ -265,17 +280,34 @@ func (e *TextExtractor) loadPageXObjects(page *Object) {
 				e.xobjects[name] = obj
 
 				// Load fonts from Form XObject resources
-				e.loadFormXObjectFonts(obj)
+				fonts := e.loadFormXObjectFonts(obj)
+				e.xobjectFonts[name] = fonts
+
+				// Make them known document-wide too (for formatting
+				// detection), without replacing a font of the same name
+				fontNames := make([]string, 0, len(fonts))
+				for fontName := range fonts {
+					fontNames = append(fontNames, fontName)
+				}
+				sort.Strings(fontNames)
+				for _, fontName := range fontNames {
+					if _, exists := e.fonts[fontName]; !exists {
+						e.fonts[fontName] = fonts[fontName]
+					}
+				}
 			}
 		}
 	}
 }
 
-// loadFormXObjectFonts loads fonts from a Form XObject's resources
-func (e *TextExtractor) loadFormXObjectFonts(formObj *Object) {
+// loadFormXObjectFonts returns the fonts a Form XObject declares in its own
+// resources, by font name
+func (e *TextExtractor) loadFormXObjectFonts(formObj *Object) map[string]*Font {
+	result := make(map[string]*Font)
+
 	resources, ok := formObj.Dict["Resources"]
 	if !ok {
-		return
+		return result
 	}
 
 	var resDict map[string]interface{}
@@ -285,16 +317,16 @@ func (e *TextExtractor) loadFormXObjectFonts(formObj *Object) {
 	case *Reference:
 		resObj, err := e.parser.GetObject(r.ObjectNum)
 		if err != nil {
-			return
+			return result
 		}
 		resDict = resObj.Dict
 	default:
-		return
+		return result
 	}
 
 	fontsDict, ok := resDict["Font"]
 	if !ok {
-		return
+		return result
 	}
 
 	var fonts map[string]interface{}
@@ -304,27 +336,24 @@ func (e *TextExtractor) loadFormXObjectFonts(formObj *Object) {
 	case *Reference:
 		fontObj, err := e.parser.GetObject(f.ObjectNum)
 		if err != nil {
-			return
+			return result
 		}
 		fonts = fontObj.Dict
 	default:
-		return
+		return result
 	}
 
 	for fontName, fontRef := range fonts {
-		if _, exists := e.fonts[fontName]; exists {
-			continue // Already loaded
-		}
-
 		if ref, ok := fontRef.(*Reference); ok {
 			fontObj, err := e.parser.GetObject(ref.ObjectNum)
 			if err != nil {
 				continue
 			}
-			font := e.parseFont(fontObj.Dict)
-			e.fonts[fontName] = font
+			result[fontName] = e.parseFont(fontObj.Dict)
 		}
 	}
+
+	return result
 }
 
 // getPageContent gets the content stream(s) for a page
@@ -929,8 +958,22 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 							}
 						}
 
+						// Inside the form, its own fonts take precedence over
+						// fonts of the same name declared elsewhere
+						outerFonts := e.fonts
+						if formFonts := e.xobjectFonts[xobjName]; len(formFonts) > 0 {
+							e.fonts = make(map[string]*Font, len(outerFonts)+len(formFonts))
+							for fontName, font := range outerFonts {
+								e.fonts[fontName] = font
+							}
+							for fontName, font := range formFonts {
+								e.fonts[fontName] = font
+							}
+						}
+
 						// Parse Form XObject content with current graphics state
 						formItems, _ := e.parseFormXObject(stream, formMediaBox, gs)
+						e.fonts = outerFonts
 						items = append(items, formItems...)
 					}
 				}

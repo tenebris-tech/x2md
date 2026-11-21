@@ -601,3 +601,131 @@ func TestMergeColumnPositions(t *testing.T) {
 		t.Errorf("mergeColumnPositions()[0] = %f, want 50.0", result[0])
 	}
 }
+
+// tableItem builds a text item for the table detection tests
+func tableItem(x, y float64, text string) *models.TextItem {
+	return &models.TextItem{X: x, Y: y, Width: 5 * float64(len(text)), Height: 10, Text: text, Font: "F1"}
+}
+
+// A cell wrapped over several lines puts lines on the page that start at an
+// interior column only. They belong to the table and must not end it.
+func TestBoundTableRegionKeepsWrappedCells(t *testing.T) {
+	c := NewCompactLines()
+	columns := []float64{80, 140, 215}
+
+	items := []*models.TextItem{
+		tableItem(80, 100, "Version"), tableItem(140, 100, "Date"), tableItem(215, 100, "Description"),
+	}
+	// Three rows 60 apart. The date is broken over two lines, above and below
+	// the line that holds the version and the description.
+	for i := 0; i < 3; i++ {
+		y := 160 + float64(i)*60
+		items = append(items,
+			tableItem(140, y-8, "06-Dec-"),
+			tableItem(80, y, "3.0"), tableItem(215, y, "Released for use"),
+			tableItem(140, y+8, "2023"),
+		)
+	}
+
+	maxY, dataRows, consistentCols, interiorCols := c.boundTableRegionByColumns(items, 100, columns, 16)
+
+	if dataRows != 3 {
+		t.Errorf("dataRows = %d, want 3", dataRows)
+	}
+	// The last row's date ends on a second line at 288, below the row itself
+	if maxY != 288 {
+		t.Errorf("maxY = %.0f, want 288, the lowest line of the last row", maxY)
+	}
+	if consistentCols < 2 || interiorCols < 1 {
+		t.Errorf("consistentCols = %d, interiorCols = %d, want at least 2 and 1", consistentCols, interiorCols)
+	}
+}
+
+// Text below a table starts at the left margin and must not be drawn in.
+func TestBoundTableRegionStopsAtProse(t *testing.T) {
+	c := NewCompactLines()
+	columns := []float64{80, 215}
+
+	items := []*models.TextItem{tableItem(80, 100, "Name"), tableItem(215, 100, "Value")}
+	for i := 0; i < 3; i++ {
+		y := 116 + float64(i)*16
+		items = append(items, tableItem(80, y, "key"), tableItem(215, y, "value"))
+	}
+	for i := 0; i < 6; i++ {
+		items = append(items, tableItem(80, 200+float64(i)*16, "A paragraph of text below the table."))
+	}
+
+	maxY, dataRows, _, _ := c.boundTableRegionByColumns(items, 100, columns, 16)
+
+	if dataRows != 3 {
+		t.Errorf("dataRows = %d, want 3", dataRows)
+	}
+	if maxY >= 200 {
+		t.Errorf("maxY = %.0f, want the region to end above the paragraph at 200", maxY)
+	}
+}
+
+// On a 2-column page, a few lines that happen to start with a capital in both
+// columns must not be taken for a table when the rest of the page shows the
+// same two columns to be page layout.
+func TestDetectAlignedTablesRejectsPageColumns(t *testing.T) {
+	c := NewCompactLines()
+
+	var items []*models.TextItem
+	// Lines of running text: the right column continues sentences
+	for i := 0; i < 5; i++ {
+		y := 100 + float64(i)*15
+		items = append(items, tableItem(56, y, "Left column text"), tableItem(297, y, "continues a sentence here"))
+	}
+	// A line with an indented right half separates the two runs
+	items = append(items, tableItem(56, 175, "Left column text"), tableItem(420, 175, "Indented line"))
+	// Three lines that start with a capital on both sides
+	for i := 0; i < 3; i++ {
+		y := 190 + float64(i)*15
+		items = append(items, tableItem(56, y, "Left column text"), tableItem(297, y, "To be or not to be"))
+	}
+
+	if regions := c.detectAlignedTables(items, 15, 700); len(regions) != 0 {
+		t.Errorf("detected %d table region(s) on a 2-column page, want none", len(regions))
+	}
+}
+
+// The same three lines on their own, with no sign of page layout, are a table.
+func TestDetectAlignedTablesKeepsTable(t *testing.T) {
+	c := NewCompactLines()
+
+	var items []*models.TextItem
+	for i := 0; i < 3; i++ {
+		y := 190 + float64(i)*15
+		items = append(items, tableItem(56, y, "Setting"), tableItem(297, y, "Enabled"))
+	}
+
+	if regions := c.detectAlignedTables(items, 15, 700); len(regions) != 1 {
+		t.Errorf("detected %d table region(s), want 1", len(regions))
+	}
+}
+
+// Indented text below a table starts at an interior column like a wrapped
+// cell does, but runs on for many lines. It must not be drawn into the table.
+func TestBoundTableRegionStopsAtIndentedText(t *testing.T) {
+	c := NewCompactLines()
+	columns := []float64{80, 215}
+
+	items := []*models.TextItem{tableItem(80, 100, "Name"), tableItem(215, 100, "Value")}
+	for i := 0; i < 3; i++ {
+		y := 116 + float64(i)*16
+		items = append(items, tableItem(80, y, "key"), tableItem(215, y, "value"))
+	}
+	for i := 0; i < 20; i++ {
+		items = append(items, tableItem(215, 200+float64(i)*16, "An indented block of text below the table."))
+	}
+
+	maxY, dataRows, _, _ := c.boundTableRegionByColumns(items, 100, columns, 16)
+
+	if dataRows != 3 {
+		t.Errorf("dataRows = %d, want 3", dataRows)
+	}
+	if maxY > 200+16*float64(maxWrappedCellRows) {
+		t.Errorf("maxY = %.0f, want the region to end within %d lines of the table", maxY, maxWrappedCellRows)
+	}
+}
