@@ -164,7 +164,7 @@ func TestDOCXConversion(t *testing.T) {
 }
 
 func TestXLSXConversion(t *testing.T) {
-	file := "private/ISO/ControlEvidence/Evidence/DCF153-Cond_Cont_Self/Evidence Library (manual evidences only)/Internal-Audit/20241212EPSISO27001InternalAudit-FinalReport.xlsx.xlsx"
+	file := "private/ControlEvidence/Evidence/DCF153-Cond_Cont_Self/Evidence Library (manual evidences only)/Internal-Audit/20241212EPSISO27001InternalAudit-FinalReport.xlsx.xlsx"
 	if _, err := os.Stat(file); os.IsNotExist(err) {
 		t.Fatalf("missing prerequisite: %s", file)
 	}
