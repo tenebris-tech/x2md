@@ -51,8 +51,7 @@ func needsMarker(block *models.TextBlock, lastMarked int) bool {
 
 // Transform converts TextBlocks to markdown strings
 func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
-	lastMarked := 0    // Paragraph number of the last marker emitted
-	previous := "\n\n" // Text of the previous item, to keep markers on their own line
+	lastMarked := 0 // Paragraph number of the last marker emitted
 
 	for _, page := range result.Pages {
 		var newItems []interface{}
@@ -72,32 +71,17 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 			// Ensure proper spacing between blocks
 			text = strings.TrimRight(text, "\n")
 
-			// Add appropriate newlines based on block type
-			// Markdown requires blank lines between paragraphs (\n\n)
-			switch textBlock.Category {
-			case "H1", "H2", "H3", "H4", "H5", "H6":
-				// Headings need blank line after
-				text = text + "\n\n"
-			case "LIST":
-				// List items - single newline within lists
-				text = text + "\n"
-			default:
-				// Regular paragraphs need blank line after
-				text = text + "\n\n"
-			}
+			// Every block ends with a blank line. A list block holds all its
+			// items, so this also ends the list: without it the following
+			// paragraph would be read as part of the last item.
+			text = text + "\n\n"
 
 			if t.paragraphMarkers && needsMarker(textBlock, lastMarked) {
-				// A marker needs a blank line before it (lists end with one newline)
-				marker := ParagraphMarker(textBlock.Paragraph) + "\n\n"
-				if !strings.HasSuffix(previous, "\n\n") {
-					marker = "\n" + marker
-				}
-				newItems = append(newItems, marker)
+				newItems = append(newItems, ParagraphMarker(textBlock.Paragraph)+"\n\n")
 				lastMarked = textBlock.Paragraph
 			}
 
 			newItems = append(newItems, text)
-			previous = text
 		}
 
 		page.Items = newItems

@@ -55,39 +55,80 @@ func (s *Styles) GetStyle(id string) *StyleDef {
 	return nil
 }
 
-// ResolveNumPr returns the numbering properties a paragraph style applies,
-// following basedOn inheritance. The nearest style in the chain that carries
-// a numPr decides: its numId is used, and if it specifies only a level, the
-// numId is taken from the nearest ancestor that has one. A level is never
-// inherited from an ancestor past the style that supplies the numId. The
-// result is nil when no style in the chain supplies a numId; a numId of 0
-// (numbering switched off) is returned as-is for the caller to interpret.
-func (s *Styles) ResolveNumPr(styleID string) *NumberingPr {
-	var level *ILevel
+// styleChain returns the style with the given ID followed by its basedOn
+// ancestors, nearest first. Unknown styles and basedOn cycles end the chain.
+func (s *Styles) styleChain(styleID string) []*StyleDef {
+	var chain []*StyleDef
 	visited := make(map[string]bool)
 
 	for styleID != "" && !visited[styleID] {
 		visited[styleID] = true
 		style := s.GetStyle(styleID)
 		if style == nil {
-			return nil
+			break
 		}
-
-		if pPr := style.ParagraphProperties; pPr != nil && pPr.NumPr != nil {
-			if level == nil {
-				level = pPr.NumPr.ILevel
-			}
-			if pPr.NumPr.NumID != nil {
-				return &NumberingPr{NumID: pPr.NumPr.NumID, ILevel: level}
-			}
-		}
-
+		chain = append(chain, style)
 		if style.BasedOn == nil {
-			return nil
+			break
 		}
 		styleID = style.BasedOn.Val
 	}
+	return chain
+}
+
+// StyleNumbering is the numbering a paragraph style applies
+type StyleNumbering struct {
+	NumID int // Numbering instance; 0 means numbering is switched off
+
+	// Level is the list level named by the style, nil when it names none
+	Level *int
+
+	// StyleIDs are the styles from the paragraph's own style up to the one
+	// that supplied NumID, nearest first. A numbering definition can link
+	// one of its levels to a style (w:lvl/w:pStyle), which decides the level
+	// when the style does not name one.
+	StyleIDs []string
+}
+
+// ResolveNumbering returns the numbering a paragraph style applies, following
+// basedOn inheritance. The nearest style in the chain that carries a numPr
+// decides: its numId is used, and if it names only a level, the numId is
+// taken from the nearest ancestor that has one. A level is never inherited
+// from beyond the style that supplies the numId. The result is nil when no
+// style in the chain supplies a numId.
+func (s *Styles) ResolveNumbering(styleID string) *StyleNumbering {
+	var level *int
+	var ids []string
+
+	for _, style := range s.styleChain(styleID) {
+		ids = append(ids, style.StyleID)
+		pPr := style.ParagraphProperties
+		if pPr == nil || pPr.NumPr == nil {
+			continue
+		}
+		if level == nil && pPr.NumPr.ILevel != nil {
+			val := pPr.NumPr.ILevel.Val
+			level = &val
+		}
+		if pPr.NumPr.NumID != nil {
+			return &StyleNumbering{NumID: pPr.NumPr.NumID.Val, Level: level, StyleIDs: ids}
+		}
+	}
 	return nil
+}
+
+// ResolveIndent returns the left indent in twips that a paragraph style
+// applies, following basedOn inheritance. The second result is false when no
+// style in the chain sets one.
+func (s *Styles) ResolveIndent(styleID string) (int, bool) {
+	for _, style := range s.styleChain(styleID) {
+		if pPr := style.ParagraphProperties; pPr != nil {
+			if twips, ok := pPr.Indentation.LeftTwips(); ok {
+				return twips, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // IsHeading checks if a style is a heading and returns the level (1-6)
@@ -186,6 +227,7 @@ type NumberLevel struct {
 	ILevel      int          `xml:"ilvl,attr"`
 	Start       *NumStart    `xml:"start"`
 	NumFmt      *NumFmt      `xml:"numFmt"`
+	PStyle      *StyleRef    `xml:"pStyle"` // Paragraph style linked to this level
 	LvlText     *LvlText     `xml:"lvlText"`
 	LvlJc       *LvlJc       `xml:"lvlJc"`
 	Indentation *Indentation `xml:"pPr>ind"`
@@ -263,6 +305,21 @@ func (n *Numbering) GetLevel(numID, level int) *NumberLevel {
 		}
 	}
 	return nil
+}
+
+// LevelForStyle returns the level of a numbering instance that is linked to
+// the given paragraph style. The second result is false when none is.
+func (n *Numbering) LevelForStyle(numID int, styleID string) (int, bool) {
+	abstractNum := n.GetAbstractNum(numID)
+	if abstractNum == nil {
+		return 0, false
+	}
+	for i := range abstractNum.Levels {
+		if lvl := &abstractNum.Levels[i]; lvl.PStyle != nil && lvl.PStyle.Val == styleID {
+			return lvl.ILevel, true
+		}
+	}
+	return 0, false
 }
 
 // IsBullet checks if a numbering level is a bullet list

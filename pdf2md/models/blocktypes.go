@@ -132,12 +132,66 @@ func BlockTypeByName(name string) *BlockType {
 	}
 }
 
+// defaultListMarkerWidth is the width of a "- " marker
+const defaultListMarkerWidth = 2
+
+// listIndenter works out how far to indent nested list items. Markdown nests
+// an item only when it is indented to where its parent's text starts, which
+// is 2 columns under "- " but 3 under "1. " and 4 under "10. ".
+type listIndenter struct {
+	markerWidths []int // Marker width of the open item at each level
+}
+
+// next returns the indentation for a list line and records the line as the
+// open item at its level
+func (l *listIndenter) next(line *LineItem) int {
+	level := line.ListLevel
+	if level < 0 {
+		level = 0
+	}
+
+	indent := 0
+	for i := 0; i < level; i++ {
+		if i < len(l.markerWidths) {
+			indent += l.markerWidths[i]
+		} else {
+			// No item was seen at this level
+			indent += defaultListMarkerWidth
+		}
+	}
+
+	for len(l.markerWidths) < level {
+		l.markerWidths = append(l.markerWidths, defaultListMarkerWidth)
+	}
+	l.markerWidths = append(l.markerWidths[:level], listMarkerWidth(line))
+	return indent
+}
+
+// listMarkerWidth returns the width of a list line's marker including the
+// space after it. The marker is the first word, or the part of it before a
+// space when the marker and text share a word.
+func listMarkerWidth(line *LineItem) int {
+	if len(line.Words) == 0 {
+		return defaultListMarkerWidth
+	}
+	marker := line.Words[0].String
+	if i := strings.Index(marker, " "); i >= 0 {
+		marker = marker[:i]
+	}
+	// A marker is short ("-", "12.", "iii."); anything longer is not one
+	if width := len(marker) + 1; width <= 6 {
+		return width
+	}
+	return defaultListMarkerWidth
+}
+
 // LinesToText converts line items to text with formatting
 func LinesToText(lineItems []*LineItem, disableInlineFormats bool) string {
 	var text strings.Builder
 	var openFormat *WordFormat
 	var inTable bool
 	var headerWritten bool
+	var listIndent listIndenter
 
 	closeFormat := func() {
 		if openFormat != nil {
@@ -195,8 +249,10 @@ func LinesToText(lineItems []*LineItem, disableInlineFormats bool) string {
 		}
 
 		// Add indentation for nested list items
-		if line.Type == BlockTypeList && line.ListLevel > 0 {
-			text.WriteString(strings.Repeat("  ", line.ListLevel))
+		if line.Type == BlockTypeList {
+			text.WriteString(strings.Repeat(" ", listIndent.next(line)))
+		} else {
+			listIndent = listIndenter{}
 		}
 
 		// Regular line processing

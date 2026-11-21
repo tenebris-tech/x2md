@@ -26,6 +26,7 @@ type Extractor struct {
 
 	// List tracking
 	listCounters map[int]map[int]int // numId -> level -> counter
+	listStack    []listPosition      // Open nesting levels of the list being read
 
 	// Image tracking
 	images       []*models.ImageItem
@@ -216,6 +217,7 @@ func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem
 	var words []*models.Word
 	var styleID string
 	var numPr *NumberingPr
+	var indent *Indentation
 	var depth int
 
 	var currentBold, currentItalic bool
@@ -240,6 +242,20 @@ func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem
 				for _, attr := range t.Attr {
 					if stripNamespacePrefix(attr.Name.Local) == "val" {
 						styleID = attr.Value
+					}
+				}
+			case "ind":
+				// Only the first w:ind is the paragraph's own; a later one
+				// belongs to a tracked change (w:pPrChange)
+				if indent == nil {
+					indent = &Indentation{}
+					for _, attr := range t.Attr {
+						switch stripNamespacePrefix(attr.Name.Local) {
+						case "left":
+							indent.Left = attr.Value
+						case "start":
+							indent.Start = attr.Value
+						}
 					}
 				}
 			case "numPr":
@@ -364,7 +380,7 @@ func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem
 			switch localName {
 			case "p":
 				// End of paragraph
-				return e.createLineItem(words, styleID, numPr), nil
+				return e.createLineItem(words, styleID, numPr, indent), nil
 			case "hyperlink":
 				inHyperlink = false
 				hyperlinkID = ""
@@ -380,7 +396,7 @@ func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem
 		}
 	}
 
-	return e.createLineItem(words, styleID, numPr), nil
+	return e.createLineItem(words, styleID, numPr, indent), nil
 }
 
 // readTextContent reads text content until the closing tag
@@ -517,11 +533,7 @@ func (e *Extractor) parseTableCell(decoder *bodyReader) (string, error) {
 }
 
 // createLineItem creates a LineItem from parsed content
-func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *NumberingPr) *models.LineItem {
-	if len(words) == 0 {
-		return nil
-	}
-
+func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *NumberingPr, indent *Indentation) *models.LineItem {
 	// Merge consecutive words with the same format to fix broken formatting
 	// Per OOXML spec, runs concatenate directly without implicit spaces
 	words = mergeConsecutiveFormattedWords(words)
@@ -530,6 +542,8 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 	words = cleanupWordWhitespace(words)
 
 	if len(words) == 0 {
+		// An empty paragraph ends any list before it
+		e.listStack = nil
 		return nil
 	}
 
@@ -549,37 +563,76 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 
 	// Handle list items. Numbering comes from the paragraph's own numPr or,
 	// failing that, from its style. A numbered heading style stays a heading.
-	numID, level, isList := e.resolveNumbering(styleID, numPr, isHeading)
-	if isList {
-		lineItem.Type = models.BlockTypeList
-
-		// Track counters
-		if e.listCounters[numID] == nil {
-			e.listCounters[numID] = make(map[int]int)
-		}
-		e.listCounters[numID][level]++
-		counter := e.listCounters[numID][level]
-
-		// Get prefix
-		prefix := e.numbering.GetListPrefix(numID, level, counter)
-
-		// Store list level on LineItem (indentation handled at render time)
-		lineItem.ListLevel = level
-
-		// Prepend prefix to first word
-		if len(lineItem.Words) > 0 {
-			lineItem.Words[0].String = prefix + lineItem.Words[0].String
-		}
+	list, isList := e.resolveNumbering(styleID, numPr, indent, isHeading)
+	if !isList {
+		e.listStack = nil
+		return lineItem
 	}
+
+	lineItem.Type = models.BlockTypeList
+
+	// Track counters
+	if e.listCounters[list.numID] == nil {
+		e.listCounters[list.numID] = make(map[int]int)
+	}
+	e.listCounters[list.numID][list.level]++
+	counter := e.listCounters[list.numID][list.level]
+
+	// Store nesting depth on LineItem (indentation handled at render time)
+	lineItem.ListLevel = e.nestingDepth(list)
+
+	// Prepend prefix to first word
+	prefix := e.numbering.GetListPrefix(list.numID, list.level, counter)
+	lineItem.Words[0].String = prefix + lineItem.Words[0].String
 
 	return lineItem
 }
 
-// resolveNumbering returns the numbering instance and level that apply to a
-// paragraph. Values on the paragraph's own numPr take precedence; whatever it
-// leaves unspecified is taken from the paragraph style, following basedOn.
-// A numId of 0 means numbering is switched off (ECMA-376 17.9.18).
-func (e *Extractor) resolveNumbering(styleID string, numPr *NumberingPr, isHeading bool) (numID, level int, ok bool) {
+// listPosition describes where a list paragraph sits: its numbering instance
+// and level, and its left indent in twips when the document states one
+type listPosition struct {
+	numID     int
+	level     int
+	indent    int
+	hasIndent bool
+}
+
+// deeperThan reports whether p is nested inside other. A larger left indent
+// nests, which is how Word shows the "List Bullet 2" family of styles: each
+// is level 0 of its own numbering and differs only by indent. Where the
+// indents are equal or not both stated, a higher level of the same numbering
+// nests.
+func (p listPosition) deeperThan(other listPosition) bool {
+	if p.hasIndent && other.hasIndent && p.indent != other.indent {
+		return p.indent > other.indent
+	}
+	return p.numID == other.numID && p.level > other.level
+}
+
+// nestingDepth returns the Markdown nesting depth of a list paragraph and
+// records it as the innermost open level of the current list. Depth counts
+// the open levels the paragraph is nested inside, so a list always starts at
+// depth 0 and never skips a depth, whatever its numbering levels are.
+func (e *Extractor) nestingDepth(list listPosition) int {
+	// Close the levels this paragraph is not inside
+	for len(e.listStack) > 0 && e.listStack[len(e.listStack)-1].deeperThan(list) {
+		e.listStack = e.listStack[:len(e.listStack)-1]
+	}
+	if len(e.listStack) == 0 || list.deeperThan(e.listStack[len(e.listStack)-1]) {
+		e.listStack = append(e.listStack, list)
+	} else {
+		// A sibling of the innermost open level
+		e.listStack[len(e.listStack)-1] = list
+	}
+	return len(e.listStack) - 1
+}
+
+// resolveNumbering returns the list position of a paragraph; ok is false when
+// the paragraph is not a list item. Values on the paragraph's own numPr take
+// precedence; whatever it leaves unspecified is taken from the paragraph
+// style, following basedOn. A numId of 0 means numbering is switched off
+// (ECMA-376 17.9.18).
+func (e *Extractor) resolveNumbering(styleID string, numPr *NumberingPr, indent *Indentation, isHeading bool) (list listPosition, ok bool) {
 	var id *NumID
 	var lvl *ILevel
 	if numPr != nil {
@@ -587,22 +640,61 @@ func (e *Extractor) resolveNumbering(styleID string, numPr *NumberingPr, isHeadi
 	}
 
 	// A heading whose style is numbered stays a heading
+	fromStyle := false
 	if id == nil && styleID != "" && !isHeading {
-		if styleNumPr := e.styles.ResolveNumPr(styleID); styleNumPr != nil {
-			id = styleNumPr.NumID
-			if lvl == nil {
-				lvl = styleNumPr.ILevel
+		if styleNum := e.styles.ResolveNumbering(styleID); styleNum != nil {
+			fromStyle = true
+			list.numID = styleNum.NumID
+			switch {
+			case lvl != nil:
+				list.level = lvl.Val
+			case styleNum.Level != nil:
+				list.level = *styleNum.Level
+			default:
+				// The numbering definition may link a level to the style
+				for _, linked := range styleNum.StyleIDs {
+					if level, found := e.numbering.LevelForStyle(list.numID, linked); found {
+						list.level = level
+						break
+					}
+				}
 			}
 		}
 	}
+	if !fromStyle {
+		if id == nil {
+			return list, false
+		}
+		list.numID = id.Val
+		if lvl != nil {
+			list.level = lvl.Val
+		}
+	}
+	if list.numID == 0 {
+		return list, false
+	}
 
-	if id == nil || id.Val == 0 {
-		return 0, 0, false
+	// Left indent: the paragraph's own, then the style's and the numbering
+	// level's. Numbering applied directly outranks the style; numbering that
+	// comes from the style is outranked by it.
+	levelIndent := func() (int, bool) {
+		if lvl := e.numbering.GetLevel(list.numID, list.level); lvl != nil {
+			return lvl.Indentation.LeftTwips()
+		}
+		return 0, false
 	}
-	if lvl != nil {
-		level = lvl.Val
+	styleIndent := func() (int, bool) { return e.styles.ResolveIndent(styleID) }
+	sources := []func() (int, bool){indent.LeftTwips, levelIndent, styleIndent}
+	if fromStyle {
+		sources = []func() (int, bool){indent.LeftTwips, styleIndent, levelIndent}
 	}
-	return id.Val, level, true
+	for _, source := range sources {
+		if list.indent, list.hasIndent = source(); list.hasIndent {
+			break
+		}
+	}
+
+	return list, true
 }
 
 // getWordFormat returns the word format for given formatting flags

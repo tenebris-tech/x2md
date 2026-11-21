@@ -364,3 +364,30 @@ func TestLinesToTextNestedLists(t *testing.T) {
 		t.Errorf("LinesToText() = %q, want %q", got, want)
 	}
 }
+
+func TestLinesToTextNestedListsUnderNumbers(t *testing.T) {
+	item := func(level int, words ...string) *LineItem {
+		line := &LineItem{Type: BlockTypeList, ListLevel: level}
+		for _, w := range words {
+			line.Words = append(line.Words, &Word{String: w})
+		}
+		return line
+	}
+	lines := []*LineItem{
+		item(0, "9.", "nine"),
+		item(1, "-", "under", "nine"),
+		item(0, "10. ten"), // Marker and text in one word, as the DOCX extractor writes them
+		item(1, "-", "under", "ten"),
+		item(2, "a.", "deeper"),
+		{Words: []*Word{{String: "Paragraph"}}},
+		item(1, "-", "starts", "nested"),
+	}
+
+	got := LinesToText(lines, false)
+	// A nested item is indented to where its parent's text starts
+	want := "9. nine\n   - under nine\n10. ten\n    - under ten\n      a. deeper\nParagraph\n  - starts nested\n"
+
+	if got != want {
+		t.Errorf("LinesToText() = %q, want %q", got, want)
+	}
+}

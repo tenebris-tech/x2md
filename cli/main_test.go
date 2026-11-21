@@ -148,6 +148,26 @@ func TestCLI_DOCXParagraphMarkers(t *testing.T) {
 	})
 }
 
+func TestCLI_DOCXStyleNumberedLists(t *testing.T) {
+	md := runCLI(t, "procedure.docx")
+
+	// The "List Number" and "List Bullet 2" paragraphs carry no numbering of
+	// their own; it comes from their styles. A browser rendering of this file
+	// numbers the steps 1-5 and indents the bullet beneath them. The blank
+	// line ends the list so the picture is not read as part of it.
+	want := "1. Step 1: notify the incident manager and record evidence item 1.\n" +
+		"2. Step 2: notify the incident manager and record evidence item 2.\n" +
+		"3. Step 3: notify the incident manager and record evidence item 3.\n" +
+		"4. Step 4: notify the incident manager and record evidence item 4.\n" +
+		"5. Step 5: notify the incident manager and record evidence item 5.\n" +
+		"   - Nested bullet\n" +
+		"\n" +
+		"![Picture 1]("
+	if !strings.Contains(md, want) {
+		t.Errorf("expected the steps as a numbered list with a nested bullet, got:\n%.1500s", md)
+	}
+}
+
 func TestCLI_XLSXSheetAndRangeLocators(t *testing.T) {
 	md := runCLI(t, "register.xlsx")
 	checkSourceHeader(t, md, "register.xlsx")

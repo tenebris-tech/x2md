@@ -6,7 +6,10 @@
 // Package docx provides DOCX file parsing functionality
 package docx
 
-import "encoding/xml"
+import (
+	"encoding/xml"
+	"strconv"
+)
 
 // Document represents the main document structure (word/document.xml)
 type Document struct {
@@ -62,9 +65,27 @@ type NumID struct {
 // Indentation specifies paragraph indentation (w:ind)
 type Indentation struct {
 	Left      string `xml:"left,attr"`
+	Start     string `xml:"start,attr"` // Bidirectional-aware equivalent of left
 	Right     string `xml:"right,attr"`
 	Hanging   string `xml:"hanging,attr"`
 	FirstLine string `xml:"firstLine,attr"`
+}
+
+// LeftTwips returns the left indent in twentieths of a point. The second
+// result is false when the element gives no usable left indent.
+func (i *Indentation) LeftTwips() (int, bool) {
+	if i == nil {
+		return 0, false
+	}
+	val := i.Left
+	if val == "" {
+		val = i.Start
+	}
+	twips, err := strconv.Atoi(val)
+	if err != nil {
+		return 0, false
+	}
+	return twips, true
 }
 
 // Justification specifies paragraph alignment (w:jc)

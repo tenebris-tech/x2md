@@ -185,8 +185,11 @@ Per OOXML specification, text runs (`<w:r>`) concatenate directly without implic
 #### List Processing (`docx2md/docx/styles.go`)
 - `Numbering.GetListPrefix()` - Returns prefix based on numFmt (bullet, decimal, etc.)
 - Supports: bullet, decimal, lowerLetter, upperLetter, lowerRoman, upperRoman
-- Nested lists use indentation level (`ilvl`)
-- A paragraph without its own `numPr` takes numbering from its style: `Styles.ResolveNumPr()` follows `basedOn`, and `Extractor.resolveNumbering()` merges it with the paragraph's own values (`numId` 0 switches numbering off; a heading whose style is numbered stays a heading)
+- A paragraph without its own `numPr` takes numbering from its style: `Styles.ResolveNumbering()` follows `basedOn`, and `Extractor.resolveNumbering()` merges it with the paragraph's own values (`numId` 0 switches numbering off; a heading whose style is numbered stays a heading)
+- Level for style numbering: the style's `ilvl`, else the level the numbering definition links to the style (`w:lvl/w:pStyle`, `Numbering.LevelForStyle()`), else 0
+- Nesting depth (`LineItem.ListLevel`) is not `ilvl`: `Extractor.nestingDepth()` keeps a stack of open list levels and nests a paragraph under the previous one when its left indent is larger (paragraph `w:ind`, style, numbering level) or, at equal or unstated indent, when it is a higher `ilvl` of the same `numId`. Word's "List Bullet 2" family is level 0 of its own numbering and nests only by indent. A list always starts at depth 0; a non-list or empty paragraph resets the stack
+- `models.LinesToText()` indents a nested item to where its parent's text starts (2 columns under `- `, 3 under `1. `), which Markdown requires for nesting
+- `ToMarkdown` ends every block, lists included, with a blank line
 
 #### Hyperlink Handling (`docx2md/docx/relationships.go`)
 - Hyperlinks reference relationships by ID (`r:id`)
