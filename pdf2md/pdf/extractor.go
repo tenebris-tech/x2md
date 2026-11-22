@@ -1174,6 +1174,7 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 	var currentText strings.Builder
 	startX := gs.TextMatrix[4]
 	startY := gs.TextMatrix[5]
+	startTM := gs.TextMatrix
 
 	for _, elem := range textArray {
 		switch v := elem.(type) {
@@ -1209,7 +1210,10 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 		pageHeight := mediaBox[3] - mediaBox[1]
 		y = pageHeight - y
 
-		fontSize := gs.FontSize * math.Sqrt(gs.CTM[0]*gs.CTM[0]+gs.CTM[1]*gs.CTM[1])
+		// The size on the page comes from the text matrix as well as the
+		// CTM: many producers set a font size of 1 and scale with Tm
+		scale := e.multiplyMatrix(startTM, gs.CTM)
+		fontSize := gs.FontSize * math.Sqrt(scale[0]*scale[0]+scale[1]*scale[1])
 		width := gs.TextMatrix[4] - startX
 
 		items = append(items, TextItem{

@@ -729,3 +729,36 @@ func TestBoundTableRegionStopsAtIndentedText(t *testing.T) {
 		t.Errorf("maxY = %.0f, want the region to end within %d lines of the table", maxY, maxWrappedCellRows)
 	}
 }
+
+// The last row of a table continued from the previous page sits alone under
+// a repeated header. A known header makes that one row a table.
+func TestDetectTableRegionsKnownHeaderWithOneRow(t *testing.T) {
+	c := NewCompactLines()
+
+	items := []*models.TextItem{
+		tableItem(80, 100, "Version"), tableItem(140, 100, "Date"), tableItem(215, 100, "Description"),
+		tableItem(80, 130, "0.1"), tableItem(140, 130, "05-Sep-2014"), tableItem(215, 130, "Draft published for review"),
+	}
+
+	regions := c.detectTableRegions(items, 16, 700)
+	if len(regions) != 1 {
+		t.Fatalf("detected %d table region(s), want 1", len(regions))
+	}
+	if len(regions[0].columns) != 3 {
+		t.Errorf("table has %d columns, want 3", len(regions[0].columns))
+	}
+}
+
+// The same single row under a header that is not a known one is not enough.
+func TestDetectTableRegionsUnknownHeaderWithOneRow(t *testing.T) {
+	c := NewCompactLines()
+
+	items := []*models.TextItem{
+		tableItem(80, 100, "Item"), tableItem(140, 100, "Owner"), tableItem(215, 100, "Comment"),
+		tableItem(80, 130, "0.1"), tableItem(140, 130, "05-Sep-2014"), tableItem(215, 130, "Draft published for review"),
+	}
+
+	if regions := c.detectTableRegions(items, 16, 700); len(regions) != 0 {
+		t.Errorf("detected %d table region(s), want none", len(regions))
+	}
+}

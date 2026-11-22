@@ -1048,7 +1048,13 @@ func (c *CompactLines) findTableHeader(items []*models.TextItem, mostUsedDistanc
 			// by artifacts (hyphens, reference numbers) can produce more, but less
 			// consistent, columns than the true header row.
 			maxY, dataRows, consistentCols, interiorCols := c.boundTableRegionByColumns(items, headerY, columns, mostUsedDistance)
-			if consistentCols >= 2 && interiorCols >= 1 && dataRows >= minTableDataRows {
+			// A known header is evidence enough with a single row beneath it: the last
+			// row of a table continued from the previous page.
+			minDataRows := minTableDataRows
+			if c.isKnownTableHeader(rowItems, columns) {
+				minDataRows = 1
+			}
+			if consistentCols >= 2 && interiorCols >= 1 && dataRows >= minDataRows {
 				// Score: prefer the header covering the most data rows (the true header sits
 				// above the whole table, while artifact "headers" inside it - e.g. rows split
 				// by hyphens - only cover a locally consistent sub-run), then more consistent
