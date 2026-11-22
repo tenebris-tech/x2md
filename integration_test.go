@@ -97,7 +97,7 @@ func TestDOCXConversion(t *testing.T) {
 		{
 			name:     "letter with list",
 			file:     "private/20110912 Manulife Financial re CPAP Claim.docx",
-			contains: []string{"Dear Sir or Madam", "1.", "2.", "Sincerely"},
+			contains: []string{"Dear Sir or Madam", "1) ", "2) ", "Sincerely"},
 			notEmpty: true,
 		},
 		{
