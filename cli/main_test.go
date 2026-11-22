@@ -211,3 +211,37 @@ func TestCLI_MarkersStandAlone(t *testing.T) {
 		}
 	}
 }
+
+func TestCLI_UnsupportedSingleFile(t *testing.T) {
+	dir := t.TempDir()
+	note := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(note, []byte("plain text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{note},
+		{"-output", filepath.Join(dir, "x.md"), note},
+	} {
+		out, err := exec.Command(x2mdBinary, args...).CombinedOutput()
+		if err == nil {
+			t.Errorf("x2md %s: expected a non-zero exit", strings.Join(args, " "))
+		}
+		if !strings.Contains(string(out), "unsupported file type: .txt") {
+			t.Errorf("x2md %s: output %q does not name the unsupported type", strings.Join(args, " "), out)
+		}
+	}
+}
+
+func TestCLI_DirectorySkipsUnsupportedFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("plain text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(x2mdBinary, "-r", dir).CombinedOutput()
+	if err != nil {
+		t.Errorf("x2md -r: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "unsupported") {
+		t.Errorf("x2md -r: unsupported file was reported: %s", out)
+	}
+}

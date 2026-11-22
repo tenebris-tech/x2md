@@ -8,6 +8,7 @@ package docx2md
 import (
 	"archive/zip"
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -245,5 +246,37 @@ func TestInvalidDocx(t *testing.T) {
 	_, err = converter.Convert(buf.Bytes())
 	if err == nil {
 		t.Error("Expected error for DOCX without document.xml")
+	}
+}
+
+func TestExtractHeadersFooters(t *testing.T) {
+	part := func(root, text string) string {
+		return `<w:` + root + ` xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+			`<w:p><w:r><w:t>` + text + `</w:t></w:r></w:p></w:` + root + `>`
+	}
+	docx := createTestDocxWithParts(`<w:p><w:r><w:t>Body text</w:t></w:r></w:p>`, map[string]string{
+		"word/header10.xml": part("hdr", "Header ten"),
+		"word/header2.xml":  part("hdr", "Header two"),
+		"word/header3.xml":  part("hdr", "Header two"),
+		"word/footer1.xml":  part("ftr", "Footer one"),
+	})
+
+	md, err := New(WithParagraphMarkers(false)).Convert(docx)
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	if strings.Contains(md, "Header") || strings.Contains(md, "Footer") {
+		t.Errorf("headers and footers are off by default, got:\n%s", md)
+	}
+
+	md, err = New(WithParagraphMarkers(false), WithExtractHeadersFooters(true)).Convert(docx)
+	if err != nil {
+		t.Fatalf("Convert failed: %v", err)
+	}
+	// Each distinct text once, in part order: header2, header3 (same text), header10
+	want := "## Document headers\n\n**Header**: Header two\n\n**Header**: Header ten\n\n---\n\n" +
+		"Body text\n\n---\n\n## Document footers\n\n**Footer**: Footer one\n\n"
+	if md != want {
+		t.Errorf("got:\n%q\nwant:\n%q", md, want)
 	}
 }

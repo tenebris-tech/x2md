@@ -361,6 +361,8 @@ expect_error "5.6 unknown flag" "flag provided but not defined" -no-such-flag te
 
 expect_error "5.7 -output with a directory" "cannot be used with directories" -output "$WORK/x.md" testdata
 
+expect_error "5.8 unsupported file type without -output" "unsupported file type" "$WORK/note.txt"
+
 # ---------------------------------------------------------------------------
 section "6. Cleanup and final verification"
 

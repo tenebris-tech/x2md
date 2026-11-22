@@ -10,6 +10,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/tenebris-tech/x2md/pdf2md/models"
@@ -216,11 +217,14 @@ func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem
 	var words []*models.Word
 	var styleID string
 	var numPr *NumberingPr
-	var depth int
 
 	var currentBold, currentItalic bool
-	var inHyperlink bool
-	var hyperlinkID string
+	var nested int // open paragraphs of text boxes inside this paragraph
+
+	// The text of a hyperlink with a target is gathered across its runs and
+	// becomes one link word when the hyperlink ends
+	var linkTarget string
+	var linkText strings.Builder
 
 	for {
 		tok, err := decoder.Token()
@@ -231,11 +235,28 @@ func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem
 			return nil, err
 		}
 
+		// mc:Fallback repeats the content of the mc:Choice before it
+		if decoder.fallbackDepth > 0 {
+			continue
+		}
+
 		switch t := tok.(type) {
 		case xml.StartElement:
 			localName := stripNamespacePrefix(t.Name.Local)
 
+			// The properties of a text box paragraph are not this paragraph's
+			if nested > 0 && (localName == "pStyle" || localName == "numPr" || localName == "ilvl" || localName == "numId") {
+				continue
+			}
+
 			switch localName {
+			case "p":
+				// A text box paragraph (w:pict/v:textbox, w:txbxContent): its
+				// text joins this paragraph, separated by a space
+				if isWordNamespace(t.Name.Space) {
+					nested++
+					words = append(words, &models.Word{String: " "})
+				}
 			case "pStyle":
 				for _, attr := range t.Attr {
 					if stripNamespacePrefix(attr.Name.Local) == "val" {
@@ -269,11 +290,9 @@ func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem
 			case "i", "iCs":
 				currentItalic = true
 			case "hyperlink":
-				inHyperlink = true
 				for _, attr := range t.Attr {
-					name := stripNamespacePrefix(attr.Name.Local)
-					if name == "id" {
-						hyperlinkID = attr.Value
+					if stripNamespacePrefix(attr.Name.Local) == "id" && attr.Value != "" {
+						linkTarget = e.relationships.GetTarget(attr.Value)
 					}
 				}
 			case "t":
@@ -282,50 +301,32 @@ func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem
 				if err != nil {
 					return nil, err
 				}
-				if text != "" {
-					word := &models.Word{
+				if linkTarget != "" {
+					linkText.WriteString(text)
+				} else if text != "" {
+					words = append(words, &models.Word{
 						String: text,
 						Format: e.getWordFormat(currentBold, currentItalic),
-					}
-					if inHyperlink && hyperlinkID != "" {
-						target := e.relationships.GetTarget(hyperlinkID)
-						if target != "" {
-							word.Type = &models.WordType{
-								Name: "LINK",
-							}
-							// Store the URL in a custom field or handle during rendering
-							word.String = fmt.Sprintf("[%s](%s)", text, target)
-							word.Format = nil // Links don't need additional formatting
-						}
-					}
-					words = append(words, word)
+					})
 				}
-			case "tab":
-				words = append(words, &models.Word{String: "\t"})
-			case "br":
-				// Check break type
-				breakType := ""
-				for _, attr := range t.Attr {
-					if stripNamespacePrefix(attr.Name.Local) == "type" {
-						breakType = attr.Value
-					}
-				}
-				if breakType == "page" {
-					// Page break - could be handled specially
+			case "tab", "br", "cr":
+				// Tabs and line breaks separate the words on either side
+				if linkTarget != "" {
+					linkText.WriteString(" ")
+				} else {
+					words = append(words, &models.Word{String: " "})
 				}
 			case "r":
 				// Reset run-level formatting
 				currentBold = false
 				currentItalic = false
 			case "drawing":
-				// Parse drawing element for images
-				imgWord, err := e.parseDrawingElement(decoder)
+				// Parse drawing element for images and text boxes
+				drawingWords, err := e.parseDrawingElement(decoder)
 				if err != nil {
 					return nil, err
 				}
-				if imgWord != nil {
-					words = append(words, imgWord)
-				}
+				words = append(words, drawingWords...)
 			case "footnoteReference":
 				// Parse footnote reference
 				for _, attr := range t.Attr {
@@ -354,33 +355,55 @@ func (e *Extractor) parseParagraphElement(decoder *bodyReader) (*models.LineItem
 						}
 					}
 				}
-			default:
-				depth++
 			}
 
 		case xml.EndElement:
 			localName := stripNamespacePrefix(t.Name.Local)
 
-			switch localName {
-			case "p":
+			switch {
+			case localName == "p" && isWordNamespace(t.Name.Space) && nested > 0:
+				nested--
+				words = append(words, &models.Word{String: " "})
+			case localName == "p" && isWordNamespace(t.Name.Space):
 				// End of paragraph
 				return e.createLineItem(words, styleID, numPr), nil
-			case "hyperlink":
-				inHyperlink = false
-				hyperlinkID = ""
-			case "r":
+			case localName == "hyperlink":
+				if linkTarget != "" {
+					words = append(words, linkWords(linkText.String(), linkTarget)...)
+				}
+				linkTarget = ""
+				linkText.Reset()
+			case localName == "r":
 				// Reset run formatting at end of run
 				currentBold = false
 				currentItalic = false
-			default:
-				if depth > 0 {
-					depth--
-				}
 			}
 		}
 	}
 
 	return e.createLineItem(words, styleID, numPr), nil
+}
+
+// linkWords returns the words for the text of a hyperlink: one LINK word
+// wrapping the trimmed text, with the whitespace the text had at its edges
+// kept outside the link as separate whitespace words
+func linkWords(text, target string) []*models.Word {
+	trimmed := trimSpaces(text)
+	if trimmed == "" {
+		return []*models.Word{{String: text}}
+	}
+	var words []*models.Word
+	if len(trimSpacesLeft(text)) != len(text) {
+		words = append(words, &models.Word{String: " "})
+	}
+	words = append(words, &models.Word{
+		String: fmt.Sprintf("[%s](%s)", normalizeSpaces(trimmed), target),
+		Type:   &models.WordType{Name: "LINK"},
+	})
+	if len(trimSpacesRight(text)) != len(text) {
+		words = append(words, &models.Word{String: " "})
+	}
+	return words
 }
 
 // readTextContent reads text content until the closing tag
@@ -472,10 +495,13 @@ func (e *Extractor) parseTableElement(decoder *bodyReader) ([]interface{}, error
 	return items, nil
 }
 
-// parseTableCell parses a table cell and returns its text content
+// parseTableCell parses a table cell and returns its text content. The
+// cell's runs are spaced as body text is (cleanupWordWhitespace); its
+// paragraphs, tabs and line breaks, and the cells of a table nested in it,
+// are separated by a space.
 func (e *Extractor) parseTableCell(decoder *bodyReader) (string, error) {
-	var text strings.Builder
-	var depth int
+	var words []*models.Word
+	var nested int // open cells of tables nested in this cell
 
 	for {
 		tok, err := decoder.Token()
@@ -486,34 +512,58 @@ func (e *Extractor) parseTableCell(decoder *bodyReader) (string, error) {
 			return "", err
 		}
 
+		// mc:Fallback repeats the content of the mc:Choice before it
+		if decoder.fallbackDepth > 0 {
+			continue
+		}
+
 		switch t := tok.(type) {
 		case xml.StartElement:
 			localName := stripNamespacePrefix(t.Name.Local)
-			if localName == "t" {
+			switch {
+			case localName == "t" && isWordNamespace(t.Name.Space):
 				content, err := e.readTextContent(decoder)
 				if err != nil {
 					return "", err
 				}
-				if text.Len() > 0 && content != "" {
-					text.WriteString(" ")
-				}
-				text.WriteString(content)
-			} else {
-				depth++
+				words = append(words, &models.Word{String: content})
+			case localName == "tab" || localName == "br" || localName == "cr":
+				words = append(words, &models.Word{String: " "})
+			case localName == "tc" && isWordNamespace(t.Name.Space):
+				nested++
 			}
 
 		case xml.EndElement:
 			localName := stripNamespacePrefix(t.Name.Local)
-			if localName == "tc" {
-				return strings.TrimSpace(text.String()), nil
+			if !isWordNamespace(t.Name.Space) {
+				continue
 			}
-			if depth > 0 {
-				depth--
+			switch {
+			case localName == "tc" && nested > 0:
+				nested--
+				words = append(words, &models.Word{String: " "})
+			case localName == "tc":
+				return joinWords(words), nil
+			case localName == "p":
+				words = append(words, &models.Word{String: " "})
 			}
 		}
 	}
 
-	return strings.TrimSpace(text.String()), nil
+	return joinWords(words), nil
+}
+
+// joinWords returns the plain text of words, spaced as the renderer spaces
+// body text
+func joinWords(words []*models.Word) string {
+	var text strings.Builder
+	for i, w := range cleanupWordWhitespace(words) {
+		if i > 0 && (w.Type == nil || !w.Type.AttachWithoutWhitespace) {
+			text.WriteString(" ")
+		}
+		text.WriteString(w.String)
+	}
+	return text.String()
 }
 
 // createLineItem creates a LineItem from parsed content
@@ -547,38 +597,26 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 		}
 	}
 
-	// Handle list items. A heading numbered only through its style stays a
-	// heading; direct numbering makes any paragraph a list item.
+	// Numbered paragraphs. A heading stays a heading and shows its number
+	// in its text; any other numbered paragraph is a list item. The label is
+	// a word of its own so it never takes on the formatting of the text.
 	numID, level, fromStyle, numbered := e.resolveNumbering(styleID, numPr)
-	if numbered && !(fromStyle && isHeading) {
-		lineItem.Type = models.BlockTypeList
+	if numbered {
+		label := e.nextNumber(numID, level)
+		prefix := listMarker(label)
+		if isHeading {
+			prefix = headingNumber(label)
+		} else {
+			lineItem.Type = models.BlockTypeList
 
-		// Track counters
-		if e.listCounters[numID] == nil {
-			e.listCounters[numID] = make(map[int]int)
-		}
-		e.listCounters[numID][level]++
-		counter := e.listCounters[numID][level]
-
-		// A new item at this level restarts the numbering of deeper levels
-		for l := range e.listCounters[numID] {
-			if l > level {
-				delete(e.listCounters[numID], l)
+			// Store list level on LineItem (indentation handled at render time)
+			lineItem.ListLevel = level
+			if fromStyle {
+				lineItem.ListLevel = max(level, e.styles.ListStyleDepth(styleID))
 			}
 		}
-
-		// Get prefix
-		prefix := e.numbering.GetListPrefix(numID, level, counter)
-
-		// Store list level on LineItem (indentation handled at render time)
-		lineItem.ListLevel = level
-		if fromStyle {
-			lineItem.ListLevel = max(level, e.styles.ListStyleDepth(styleID))
-		}
-
-		// Prepend prefix to first word
-		if len(lineItem.Words) > 0 {
-			lineItem.Words[0].String = prefix + lineItem.Words[0].String
+		if prefix != "" {
+			lineItem.Words = append([]*models.Word{{String: prefix}}, lineItem.Words...)
 		}
 	}
 
@@ -589,8 +627,8 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 // numPr and its paragraph style. A direct numId wins over the style, and a
 // numId of 0 means the paragraph is not numbered. When no level is given,
 // the level of the numbering definition bound (w:lvl/w:pStyle) to the
-// nearest style in the paragraph style's basedOn chain is used, else 0. fromStyle reports that the numId
-// came from the style.
+// nearest style in the paragraph style's basedOn chain is used, else 0.
+// fromStyle reports that the numId came from the style.
 func (e *Extractor) resolveNumbering(styleID string, direct *NumberingPr) (numID, level int, fromStyle, numbered bool) {
 	var numIDRef *NumID
 	var levelRef *ILevel
@@ -692,48 +730,74 @@ func sameFormat(a, b *models.WordFormat) bool {
 	return a.Name == b.Name
 }
 
-// cleanupWordWhitespace cleans up whitespace issues in words
+// cleanupWordWhitespace moves the whitespace of the runs into the spacing
+// between words. The renderer puts one space between words unless a word's
+// type attaches it to the one before, so each word is trimmed and marked as
+// attached when the source had no whitespace before it. Runs thus still
+// concatenate without implicit spaces ("an" + "d" stays "and", "un" + bold
+// "able" becomes "un**able**"), and a space that sits at the edge of a
+// formatted run is written once, outside the formatting. Runs of whitespace
+// become a single space. Only ASCII whitespace counts: a no-break space is
+// text and is kept.
 func cleanupWordWhitespace(words []*models.Word) []*models.Word {
 	var result []*models.Word
+	spaceBefore := false // whitespace seen since the previous word
 	for _, w := range words {
-		// Skip empty words and pure whitespace words (except tabs)
-		trimmed := strings.TrimSpace(w.String)
-		if trimmed == "" && w.String != "\t" {
+		trimmed := trimSpaces(w.String)
+		if trimmed == "" {
+			if w.String != "" {
+				spaceBefore = true
+			}
 			continue
 		}
+		leading := len(trimSpacesLeft(w.String)) != len(w.String)
+		trailing := len(trimSpacesRight(w.String)) != len(w.String)
 
-		// Normalize multiple spaces to single space
-		w.String = normalizeSpaces(w.String)
-
+		w.String = normalizeSpaces(trimmed)
+		if len(result) > 0 && !spaceBefore && !leading {
+			w.Type = attachedType(w.Type)
+		}
 		result = append(result, w)
+		spaceBefore = trailing
 	}
 	return result
 }
 
-// normalizeSpaces replaces multiple consecutive spaces with a single space
-func normalizeSpaces(s string) string {
-	var result strings.Builder
-	prevSpace := false
-	for _, r := range s {
-		if r == ' ' {
-			if !prevSpace {
-				result.WriteRune(r)
-				prevSpace = true
-			}
-		} else {
-			result.WriteRune(r)
-			prevSpace = false
-		}
+// asciiSpace is the whitespace that separates words; a no-break space
+// (U+00A0) is not in it
+const asciiSpace = " \t\r\n"
+
+func trimSpaces(s string) string      { return strings.Trim(s, asciiSpace) }
+func trimSpacesLeft(s string) string  { return strings.TrimLeft(s, asciiSpace) }
+func trimSpacesRight(s string) string { return strings.TrimRight(s, asciiSpace) }
+
+// attachedType returns a copy of a word type, or a plain type when t is nil,
+// that the renderer writes without a space before it
+func attachedType(t *models.WordType) *models.WordType {
+	attached := models.WordType{}
+	if t != nil {
+		attached = *t
 	}
-	return result.String()
+	attached.AttachWithoutWhitespace = true
+	return &attached
 }
 
-// parseDrawingElement parses a drawing element and extracts image information.
-// Returns a Word with type IMAGE containing the image ID reference.
-func (e *Extractor) parseDrawingElement(decoder *bodyReader) (*models.Word, error) {
-	var embedID string
+// normalizeSpaces replaces each run of ASCII whitespace with a single space
+func normalizeSpaces(s string) string {
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
+		return strings.ContainsRune(asciiSpace, r)
+	}), " ")
+}
+
+// parseDrawingElement parses a drawing element and returns its words: the
+// text of any text box it holds (w:txbxContent), then a Word with type IMAGE
+// containing the image ID reference when it holds an image.
+func (e *Extractor) parseDrawingElement(decoder *bodyReader) ([]*models.Word, error) {
+	type picture struct{ embedID, altText string }
+	var pictures []picture
 	var altText string
-	var depth int
+	var words []*models.Word
+	var nested int // drawings inside a text box of this drawing
 
 	for {
 		tok, err := decoder.Token()
@@ -750,44 +814,74 @@ func (e *Extractor) parseDrawingElement(decoder *bodyReader) (*models.Word, erro
 
 			switch localName {
 			case "docPr":
-				// Get alt text from description attribute
+				// Alt text of the pictures that follow: the description,
+				// else the name
+				var descr, name string
 				for _, attr := range t.Attr {
-					name := stripNamespacePrefix(attr.Name.Local)
-					if name == "descr" {
-						altText = attr.Value
-					} else if name == "name" && altText == "" {
-						// Use name as fallback for alt text
-						altText = attr.Value
+					switch stripNamespacePrefix(attr.Name.Local) {
+					case "descr":
+						descr = attr.Value
+					case "name":
+						name = attr.Value
 					}
+				}
+				altText = descr
+				if altText == "" {
+					altText = name
 				}
 			case "blip":
 				// Get the embed relationship ID
 				for _, attr := range t.Attr {
 					name := stripNamespacePrefix(attr.Name.Local)
-					if name == "embed" {
-						embedID = attr.Value
+					if name == "embed" && attr.Value != "" {
+						pictures = append(pictures, picture{attr.Value, altText})
 					}
 				}
-			default:
-				depth++
+			case "drawing":
+				nested++
+			case "tab", "br", "cr":
+				if isWordNamespace(t.Name.Space) && decoder.fallbackDepth == 0 {
+					words = append(words, &models.Word{String: " "})
+				}
+			case "p", "t":
+				if !isWordNamespace(t.Name.Space) || decoder.fallbackDepth > 0 {
+					continue
+				}
+				if localName == "p" {
+					// Text box paragraphs are separated by a space
+					words = append(words, &models.Word{String: " "})
+					continue
+				}
+				text, err := e.readTextContent(decoder)
+				if err != nil {
+					return nil, err
+				}
+				words = append(words, &models.Word{String: text})
 			}
 
 		case xml.EndElement:
 			localName := stripNamespacePrefix(t.Name.Local)
-			if localName == "drawing" {
-				// End of drawing element
-				if embedID != "" {
-					return e.extractAndRegisterImage(embedID, altText)
+			switch {
+			case localName == "drawing" && nested > 0:
+				nested--
+			case localName == "drawing":
+				for _, pic := range pictures {
+					image, err := e.extractAndRegisterImage(pic.embedID, pic.altText)
+					if err != nil {
+						return nil, err
+					}
+					if image != nil {
+						words = append(words, &models.Word{String: " "}, image, &models.Word{String: " "})
+					}
 				}
-				return nil, nil
-			}
-			if depth > 0 {
-				depth--
+				return words, nil
+			case localName == "p" && isWordNamespace(t.Name.Space) && decoder.fallbackDepth == 0:
+				words = append(words, &models.Word{String: " "})
 			}
 		}
 	}
 
-	return nil, nil
+	return words, nil
 }
 
 // extractAndRegisterImage extracts image data from the DOCX archive and registers it.
@@ -986,7 +1080,7 @@ func (e *Extractor) extractParagraphText(para Paragraph) string {
 		}
 	}
 
-	return strings.TrimSpace(text.String())
+	return trimSpaces(text.String())
 }
 
 // HeaderFooterContent represents extracted header or footer content
@@ -1003,7 +1097,8 @@ func (e *Extractor) ExtractHeaders() ([]HeaderFooterContent, error) {
 	}
 
 	var result []HeaderFooterContent
-	for id, header := range headers {
+	for _, id := range sortedPartIDs(headers) {
+		header := headers[id]
 		content := e.extractHeaderFooterContent(header.Paragraphs, header.Tables)
 		if content != "" {
 			result = append(result, HeaderFooterContent{ID: id, Content: content})
@@ -1021,7 +1116,8 @@ func (e *Extractor) ExtractFooters() ([]HeaderFooterContent, error) {
 	}
 
 	var result []HeaderFooterContent
-	for id, footer := range footers {
+	for _, id := range sortedPartIDs(footers) {
+		footer := footers[id]
 		content := e.extractHeaderFooterContent(footer.Paragraphs, footer.Tables)
 		if content != "" {
 			result = append(result, HeaderFooterContent{ID: id, Content: content})
@@ -1029,6 +1125,22 @@ func (e *Extractor) ExtractFooters() ([]HeaderFooterContent, error) {
 	}
 
 	return result, nil
+}
+
+// sortedPartIDs returns the IDs of header or footer parts in a stable order:
+// by name, with "header2" before "header10".
+func sortedPartIDs[T any](parts map[string]T) []string {
+	ids := make([]string, 0, len(parts))
+	for id := range parts {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if len(ids[i]) != len(ids[j]) {
+			return len(ids[i]) < len(ids[j])
+		}
+		return ids[i] < ids[j]
+	})
+	return ids
 }
 
 // extractHeaderFooterContent extracts text from paragraphs and tables

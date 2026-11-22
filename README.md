@@ -286,7 +286,10 @@ The `docx2md` package converts Microsoft Word documents to Markdown.
 #### Features
 
 - Heading detection from Word styles (Heading 1-6)
-- List support (bulleted, numbered, lettered, roman numerals) with nesting
+- List support (bulleted, numbered, lettered, roman numerals) with nesting, including numbering set by paragraph styles
+- Numbered headings and multi-level numbers ("1.1", "(a)", "Article 1") as Word shows them
+- Text in text boxes
+- Optional header and footer text
 - Table extraction with markdown formatting
 - Bold/italic text formatting
 - Hyperlink conversion to markdown syntax
@@ -326,7 +329,7 @@ markdown, images, err := converter.ConvertWithImages(data)
 |--------|-------------|---------|
 | `WithPreserveFormatting(bool)` | Preserve bold/italic | true |
 | `WithPreserveImages(bool)` | Extract and include images | true |
-| `WithExtractHeadersFooters(bool)` | Include document headers/footers | false |
+| `WithExtractHeadersFooters(bool)` | Include header text before the body and footer text after it (library only, no CLI flag) | false |
 | `WithCompact(bool)` | Remove excessive blank lines | false |
 | `WithParagraphMarkers(bool)` | Emit `<!-- para N -->` location markers | true |
 
