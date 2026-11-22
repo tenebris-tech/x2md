@@ -1,7 +1,8 @@
 # TODO
 
 Handover notes for continuing the source-location work on another machine.
-Written 2026-11-20, after pull request #3 was merged to `main`.
+Written 2026-11-20, after pull request #3 was merged to `main`. Updated
+2026-11-22 on branch `claude/peaceful-cori-6dbuqe`.
 
 Delete this file when the items below are done or moved elsewhere.
 
@@ -70,81 +71,39 @@ The quote has to be matched loosely: ignore whitespace and strip Markdown marks
 - DOCX gets paragraph numbers, not page numbers: a browser renderer does not
   paginate like Word.
 
+## Done since pull request #3
+
+Verified on the `private/` corpus (405 distinct PDFs, 19 distinct DOCX files).
+
+- PDF output is repeatable: the same file converts identically on every run.
+  The causes were a line distance measured in the wrong direction, ties broken
+  by map order, and fonts of Form XObjects sharing one name table.
+- Text below a table, or a whole page under a falsely detected header, is no
+  longer drawn into a table. A 2-column page layout is no longer taken for a
+  table. Reading order against `pdftotext` improved on 342 of 398 scored files.
+- TJ text reports its real font size, so height-based heading detection works
+  on documents that scale with the text matrix (`CPP_ND_V3.0E.pdf` is one).
+- DOCX numbering: lists and headings numbered through a style, multi-level
+  formats ("1.1", "(a)"), restarts, overrides and `numStyleLink`.
+- DOCX text: source spacing kept (no doubled spaces), line breaks and tabs
+  separate words, text boxes and nested tables keep their text.
+- `WithExtractHeadersFooters` exists (off by default).
+- A single unsupported file is an error with or without `-output`.
+- Paragraph markers were checked against the document XML and, for the first
+  round, against a browser rendering: the count is correct on every file.
+
 ## What is left
 
-### 1. Verify on real documents (do this first)
-
-Everything was verified on generated documents only. The `private/` corpus was
-not available, so nothing here has been run against real Word-authored files
-or the owner's real PDFs.
-
-1. `make test` - confirm the gate passes on this machine. It needs Go and a C
-   compiler (for the race detector).
-2. `make test-private` - runs `integration_test.go` against `private/`. It
-   fails, naming the file, if a document it expects is missing. The file names
-   it expects are listed in `integration_test.go`.
-3. Convert a spread of real DOCX files and check the paragraph markers. Things
-   most likely to break the count: text boxes, content controls, tracked
-   changes, footnotes, nested tables, documents not last saved by Word.
-   Appendix A has a script that checks every marker against a browser
-   rendering.
-4. Convert a spread of real PDFs and compare with the output from before this
-   work (commit `2abdd91`, the last one on `main` before pull request #3)
-   using `-no-location-markers`, so the only differences are real ones.
-   Appendix B has a script that scores word recovery against `pdftotext`.
-5. Check the PDF reference cases in `CLAUDE.md` ("PDF Testing") still hold for
-   `CPP_ND_V3.0E.pdf`. On the copy downloaded during this work the output was
-   byte-identical before and after the glyph fix.
-
-Not verified at all on real files: the `<!-- pages N-M -->` range marker for
-tables that continue across pages, and scanned-page ordering. Both have unit
-tests only.
-
-### 2. Lists numbered through a Word style lose their numbers
-
-A paragraph is treated as a list item only when it carries `w:numPr` itself.
-When the numbering comes from the paragraph style ("List Number", "List
-Bullet"), the output is plain paragraphs with no number or bullet.
-
-- Reproduce: `testdata/procedure.docx` has "Step 1" to "Step 5" in style
-  "List Number" and "Nested bullet" in "List Bullet 2".
-- Fix: when a paragraph has no direct `numPr`, resolve it from the style,
-  following `basedOn`. Code is in `docx2md/docx/extractor.go`
-  (`parseParagraphElement`, `createLineItem`) and `docx2md/docx/styles.go`.
-- Do not change paragraph counting. `cli/main_test.go` and `test.sh` assert
-  exact paragraph numbers for this fixture.
-- Options: fix it (recommended), or leave it if real evidence mostly numbers
-  lists directly. Item 1 will show which.
-
-### 3. An unsupported file is silently ignored
-
-`x2md note.txt` without `-output` exits 0 and prints nothing. With `-output`
-it reports `unsupported file type`. `test.sh` check 5.3 covers only the
-`-output` form.
-
-- Options: make a single unsupported file an error in both cases
-  (recommended; directory conversions keep skipping unsupported files), or
-  leave it if x2md is only ever called as a library.
-
-### 4. Headers and footers
-
-`README.md` lists a DOCX option `WithExtractHeadersFooters` that does not
-exist. `docx2md/converter.go` has an `ExtractHeadersFooters` field and the
-code to use it, but nothing can set it, so header and footer text never
-reaches the Markdown and cannot be cited.
-
-- Option A: add the option, off by default. Worth it if headers carry things
-  an auditor cites (document ID, version, classification).
-- Option B: delete the README line and the unused code.
-- Undecided. Item 1 will show whether real evidence has meaningful headers.
-
-### 5. The viewer (in the application, not in x2md)
+### 1. The viewer (in the application, not in x2md)
 
 Nothing is built. x2md only supplies the markers.
 
 - PDF: an embedded viewer such as PDF.js can open at a page and highlight a
   search hit. Whether Chrome's built-in viewer supports search-by-link was
   not verified.
+- DOCX: render with `breakPages: false`. With the default, `docx-preview` splits a
+  paragraph at a page break into two `p` elements, which shifted the count by one
+  in two of 19 real documents. With it off, every marker matched.
 - DOCX: `docx-preview` 0.4.1 (Apache-2.0, needs `jszip`) rendered the fixture
   in about 170 ms. The Nth `section.docx > article p` element was the Nth
   paragraph x2md counted, on both fixtures tried. Header, footer, list
@@ -166,25 +125,28 @@ Options for x2md's part:
 - C: nothing; the README sections "Source Path", "Page Markers" and
   "Paragraph Markers" already describe the output.
 
-## Smaller things noticed, not confirmed as problems
+### 2. Known limits in PDF table detection
 
-- DOCX output has doubled spaces around formatted runs, for example
-  `defines  **mandatory**  steps`. Harmless if quotes are matched ignoring
-  whitespace.
-- `multicolumn.pdf` (a third-party test file) once produced different output
-  on two runs of the same build. Seen once and not reproduced.
-- In `pdf2md/pdf/extractor.go`, text shown with the array operator (`TJ`)
-  computes its font size from the page transform only, while single strings
-  (`Tj`) also apply the text matrix. This looks inconsistent but no wrong
-  output was traced to it.
-- A paragraph nested inside another paragraph (a text box) ends the outer
-  paragraph early in `parseParagraphElement`. Counting is still correct; the
-  text after the box may be lost. Not tested on a real document.
+- A table whose cells are centred against each other, so that the lines of
+  two cells in a row sit half a line apart, can lose its first row to plain
+  text. Seen in one certificate in the corpus. Rows are paired by Y bucket;
+  pairing half-line-offset lines as one row fixed that file and broke
+  2-column pages, so it was not kept.
+- The 2-column rule drops an aligned 2-column table that shares a page and
+  column positions with page-layout text. Not seen in the corpus.
+- Some fonts report text widths two to three times too wide. Nothing relies
+  on width for a decision that matters, which is why.
+
+### 3. Known limits in DOCX numbering
+
+- Counters are kept per `numId`. Word may continue one sequence across
+  several `numId`s that share an `abstractNum`. Not confirmed against the
+  specification, so not changed.
 
 ## How to continue
 
 ```bash
-git checkout main && git pull
+git checkout claude/peaceful-cori-6dbuqe && git pull
 make test                 # must pass before and after any change
 make test-private         # needs private/
 make                      # test, then build bin/x2md
