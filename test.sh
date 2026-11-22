@@ -250,6 +250,17 @@ else
     fail "3.5 default output is written next to the input" "exit $CLI_EXIT: $(cat "$CLI_ERR")"
 fi
 
+# The steps are numbered and the bullet nested only through their Word styles
+steps=0
+for i in 1 2 3 4 5; do
+    grep -q "^$i\. Step $i: notify" "$WORK/procedure.docx.md" && steps=$((steps + 1))
+done
+if [ "$steps" -eq 5 ] && grep -q "^    - Nested bullet$" "$WORK/procedure.docx.md"; then
+    pass "3.6 DOCX list numbered through its paragraph style"
+else
+    fail "3.6 DOCX list numbered through its paragraph style" "$(grep -E 'Step [1-5]|Nested bullet' "$WORK/procedure.docx.md")"
+fi
+
 # ---------------------------------------------------------------------------
 section "4. CLI end-to-end: location contract"
 

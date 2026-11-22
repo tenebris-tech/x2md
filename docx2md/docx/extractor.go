@@ -538,23 +538,20 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 	}
 
 	// Determine block type from style
+	isHeading := false
 	if styleID != "" {
-		isHeading, level := e.styles.IsHeading(styleID)
+		var level int
+		isHeading, level = e.styles.IsHeading(styleID)
 		if isHeading {
 			lineItem.Type = models.HeadlineByLevel(level)
 		}
 	}
 
-	// Handle list items
-	if numPr != nil && numPr.NumID != nil {
+	// Handle list items. A heading numbered only through its style stays a
+	// heading; direct numbering makes any paragraph a list item.
+	numID, level, fromStyle, numbered := e.resolveNumbering(styleID, numPr)
+	if numbered && !(fromStyle && isHeading) {
 		lineItem.Type = models.BlockTypeList
-
-		// Get list prefix
-		numID := numPr.NumID.Val
-		level := 0
-		if numPr.ILevel != nil {
-			level = numPr.ILevel.Val
-		}
 
 		// Track counters
 		if e.listCounters[numID] == nil {
@@ -563,11 +560,21 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 		e.listCounters[numID][level]++
 		counter := e.listCounters[numID][level]
 
+		// A new item at this level restarts the numbering of deeper levels
+		for l := range e.listCounters[numID] {
+			if l > level {
+				delete(e.listCounters[numID], l)
+			}
+		}
+
 		// Get prefix
 		prefix := e.numbering.GetListPrefix(numID, level, counter)
 
 		// Store list level on LineItem (indentation handled at render time)
 		lineItem.ListLevel = level
+		if fromStyle {
+			lineItem.ListLevel = max(level, e.styles.ListStyleDepth(styleID))
+		}
 
 		// Prepend prefix to first word
 		if len(lineItem.Words) > 0 {
@@ -576,6 +583,49 @@ func (e *Extractor) createLineItem(words []*models.Word, styleID string, numPr *
 	}
 
 	return lineItem
+}
+
+// resolveNumbering returns the list numbering of a paragraph from its direct
+// numPr and its paragraph style. A direct numId wins over the style, and a
+// numId of 0 means the paragraph is not numbered. When no level is given,
+// the level of the numbering definition bound (w:lvl/w:pStyle) to the
+// nearest style in the paragraph style's basedOn chain is used, else 0. fromStyle reports that the numId
+// came from the style.
+func (e *Extractor) resolveNumbering(styleID string, direct *NumberingPr) (numID, level int, fromStyle, numbered bool) {
+	var numIDRef *NumID
+	var levelRef *ILevel
+	if direct != nil {
+		numIDRef = direct.NumID
+		levelRef = direct.ILevel
+	}
+	if numIDRef == nil {
+		styleNumID, styleLevel := e.styles.StyleNumbering(styleID)
+		if styleNumID == nil {
+			return 0, 0, false, false
+		}
+		numIDRef = styleNumID
+		fromStyle = true
+		if levelRef == nil {
+			levelRef = styleLevel
+		}
+	}
+	if numIDRef.Val == 0 {
+		return 0, 0, false, false
+	}
+
+	numID = numIDRef.Val
+	switch {
+	case levelRef != nil:
+		level = levelRef.Val
+	case fromStyle:
+		for _, style := range e.styles.styleChain(styleID) {
+			if l, ok := e.numbering.LevelForStyle(numID, style.StyleID); ok {
+				level = l
+				break
+			}
+		}
+	}
+	return numID, level, fromStyle, true
 }
 
 // getWordFormat returns the word format for given formatting flags

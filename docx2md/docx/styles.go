@@ -55,6 +55,85 @@ func (s *Styles) GetStyle(id string) *StyleDef {
 	return nil
 }
 
+// styleChain returns the style and its basedOn ancestors, nearest first.
+// A cycle in the basedOn chain ends the walk.
+func (s *Styles) styleChain(id string) []*StyleDef {
+	var chain []*StyleDef
+	seen := make(map[string]bool)
+	for id != "" && !seen[id] {
+		seen[id] = true
+		style := s.GetStyle(id)
+		if style == nil {
+			break
+		}
+		chain = append(chain, style)
+		if style.BasedOn == nil {
+			break
+		}
+		id = style.BasedOn.Val
+	}
+	return chain
+}
+
+// StyleNumbering returns the numbering a paragraph style gives its
+// paragraphs, following the basedOn chain. numID comes from the nearest
+// style that sets it; level only from that style or a nearer one, so it
+// never comes from an ancestor that belongs to another numbering. Both are
+// nil when not set. A numID of 0 means the style turns numbering off.
+func (s *Styles) StyleNumbering(styleID string) (numID *NumID, level *ILevel) {
+	for _, style := range s.styleChain(styleID) {
+		if style.ParagraphProperties == nil || style.ParagraphProperties.NumPr == nil {
+			continue
+		}
+		numPr := style.ParagraphProperties.NumPr
+		if level == nil && numPr.ILevel != nil {
+			level = numPr.ILevel
+		}
+		if numPr.NumID != nil {
+			return numPr.NumID, level
+		}
+	}
+	return nil, nil
+}
+
+// ListStyleDepth returns the nesting depth implied by Word's built-in list
+// style names "List N", "List Bullet N" and "List Number N" (depth N-1),
+// taken from the nearest style in the basedOn chain with such a name.
+// These styles are usually bound to separate single-level lists whose only
+// sign of nesting is their indentation. Other styles return 0.
+func (s *Styles) ListStyleDepth(styleID string) int {
+	for _, style := range s.styleChain(styleID) {
+		if style.Name == nil {
+			continue
+		}
+		if depth, ok := builtInListDepth(style.Name.Val); ok {
+			return depth
+		}
+	}
+	return 0
+}
+
+// builtInListDepth reports whether name is one of Word's built-in list
+// style names ("List", "List Bullet", "List Number", optionally followed
+// by 2-9) and the nesting depth it implies.
+func builtInListDepth(name string) (int, bool) {
+	name = strings.ToLower(name)
+	for _, base := range []string{"list bullet", "list number", "list"} {
+		rest, ok := strings.CutPrefix(name, base)
+		if !ok {
+			continue
+		}
+		if rest == "" {
+			return 0, true
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(rest, " "))
+		if strings.HasPrefix(rest, " ") && err == nil && n >= 2 && n <= 9 {
+			return n - 1, true
+		}
+	}
+	return 0, false
+}
+
 // IsHeading checks if a style is a heading and returns the level (1-6)
 func (s *Styles) IsHeading(styleID string) (bool, int) {
 	style := s.GetStyle(styleID)
@@ -153,6 +232,7 @@ type NumberLevel struct {
 	NumFmt      *NumFmt      `xml:"numFmt"`
 	LvlText     *LvlText     `xml:"lvlText"`
 	LvlJc       *LvlJc       `xml:"lvlJc"`
+	PStyle      *StyleRef    `xml:"pStyle"` // paragraph style bound to this level
 	Indentation *Indentation `xml:"pPr>ind"`
 }
 
@@ -228,6 +308,21 @@ func (n *Numbering) GetLevel(numID, level int) *NumberLevel {
 		}
 	}
 	return nil
+}
+
+// LevelForStyle returns the level of numID's definition that is bound to
+// the paragraph style styleID through w:lvl/w:pStyle.
+func (n *Numbering) LevelForStyle(numID int, styleID string) (int, bool) {
+	abstractNum := n.GetAbstractNum(numID)
+	if abstractNum == nil || styleID == "" {
+		return 0, false
+	}
+	for _, lvl := range abstractNum.Levels {
+		if lvl.PStyle != nil && lvl.PStyle.Val == styleID {
+			return lvl.ILevel, true
+		}
+	}
+	return 0, false
 }
 
 // IsBullet checks if a numbering level is a bullet list

@@ -358,7 +358,7 @@ func TestLinesToTextNestedLists(t *testing.T) {
 	}
 
 	got := LinesToText(lines, false)
-	want := "- Level 0\n  - Level 1\n    - Level 2\n- Back to 0\n"
+	want := "- Level 0\n    - Level 1\n        - Level 2\n- Back to 0\n"
 
 	if got != want {
 		t.Errorf("LinesToText() = %q, want %q", got, want)

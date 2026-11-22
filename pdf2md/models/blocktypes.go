@@ -194,9 +194,10 @@ func LinesToText(lineItems []*LineItem, disableInlineFormats bool) string {
 			headerWritten = false
 		}
 
-		// Add indentation for nested list items
+		// Add indentation for nested list items. Four spaces per level put
+		// the item inside the content of a "- ", "1. " or "10. " parent.
 		if line.Type == BlockTypeList && line.ListLevel > 0 {
-			text.WriteString(strings.Repeat("  ", line.ListLevel))
+			text.WriteString(strings.Repeat("    ", line.ListLevel))
 		}
 
 		// Regular line processing
