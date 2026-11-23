@@ -14,7 +14,7 @@ func glyphItems(y float64, words ...string) []TextItem {
 	x := 72.0
 	for _, word := range words {
 		for _, r := range word {
-			items = append(items, TextItem{X: x, Y: y, Width: 0.5, Height: 12, Text: string(r), Font: "F0", advance: 6})
+			items = append(items, TextItem{X: x, Y: y, Width: 6, Height: 12, Text: string(r), Font: "F0"})
 			x += 6
 		}
 		x += 3.3
@@ -69,13 +69,13 @@ func TestMergeGlyphRuns_LeavesWordPerItemPagesAlone(t *testing.T) {
 	var items []TextItem
 	x := 72.0
 	for i := 0; i < 30; i++ {
-		items = append(items, TextItem{X: x, Y: 100, Width: 40, Height: 12, Text: "Evaluation", Font: "F0", advance: 40})
+		items = append(items, TextItem{X: x, Y: 100, Width: 40, Height: 12, Text: "Evaluation", Font: "F0"})
 		x += 43
 	}
 	items = append(items,
-		TextItem{X: x, Y: 100, Width: 3, Height: 12, Text: "[", Font: "F0", advance: 3},
-		TextItem{X: x + 3, Y: 100, Width: 6, Height: 12, Text: "1", Font: "F0", advance: 6},
-		TextItem{X: x + 9, Y: 100, Width: 3, Height: 12, Text: "]", Font: "F0", advance: 3},
+		TextItem{X: x, Y: 100, Width: 3, Height: 12, Text: "[", Font: "F0"},
+		TextItem{X: x + 3, Y: 100, Width: 6, Height: 12, Text: "1", Font: "F0"},
+		TextItem{X: x + 9, Y: 100, Width: 3, Height: 12, Text: "]", Font: "F0"},
 	)
 	got := mergeGlyphRuns(items)
 	if len(got) != len(items) {

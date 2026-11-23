@@ -382,10 +382,10 @@ func TestCombineText(t *testing.T) {
 		want  string
 	}{
 		{
-			name: "simple text combination with large gap",
+			name: "word space gap",
 			items: []*models.TextItem{
 				{X: 0, Y: 100, Width: 30, Height: 12, Text: "Hello"},
-				{X: 80, Y: 100, Width: 30, Height: 12, Text: "World"}, // Gap of 50 (80-30) > 36 (12*3) threshold
+				{X: 33, Y: 100, Width: 30, Height: 12, Text: "World"}, // Gap of 3 (0.25 em at 12) > 2.4 (12*0.2) threshold
 			},
 			want: "Hello World",
 		},
@@ -393,9 +393,18 @@ func TestCombineText(t *testing.T) {
 			name: "text items with small gap - same word",
 			items: []*models.TextItem{
 				{X: 0, Y: 100, Width: 30, Height: 12, Text: "Hello"},
-				{X: 50, Y: 100, Width: 30, Height: 12, Text: "World"}, // Gap of 20 (50-30) < 36 (12*3) threshold
+				{X: 31, Y: 100, Width: 30, Height: 12, Text: "World"}, // Gap of 1 < 2.4 (12*0.2) threshold
 			},
 			want: "HelloWorld", // No space - considered same word in PDF
+		},
+		{
+			// A narrow word's width is its real width, not an estimate
+			name: "narrow text followed by a word space",
+			items: []*models.TextItem{
+				{X: 0, Y: 100, Width: 8, Height: 12, Text: "ill"},
+				{X: 11, Y: 100, Width: 30, Height: 12, Text: "World"},
+			},
+			want: "ill World",
 		},
 		{
 			name: "date with hyphens",
@@ -760,5 +769,43 @@ func TestDetectTableRegionsUnknownHeaderWithOneRow(t *testing.T) {
 
 	if regions := c.detectTableRegions(items, 16, 700); len(regions) != 0 {
 		t.Errorf("detected %d table region(s), want none", len(regions))
+	}
+}
+
+// Lines whose text runs from the left half across the middle of the page
+// are single-column lines, even when the only item that starts in the right
+// half is a dot leader or other text that looks like a sentence fragment
+func TestDetectAndSplitMultiColumnLayout_TextAcrossMiddle(t *testing.T) {
+	// 20 lines starting at X 60; the first 6 also have a dot leader that
+	// starts at X 400, so the page's middle is at X 230
+	page := func(leftWidth float64) []*models.TextItem {
+		var items []*models.TextItem
+		for i := 0; i < 20; i++ {
+			y := 100 + 20*float64(i)
+			items = append(items, &models.TextItem{X: 60, Y: y, Width: leftWidth, Height: 10, Text: "Entry"})
+			if i < 6 {
+				items = append(items, &models.TextItem{X: 400, Y: y, Width: 150, Height: 10, Text: ".....5"})
+			}
+		}
+		return items
+	}
+
+	tests := []struct {
+		name      string
+		leftWidth float64
+		want      bool
+	}{
+		{"left text crosses the middle", 300, false},
+		{"left text ends before the middle", 150, true},
+	}
+
+	c := NewCompactLines()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, got := c.detectAndSplitMultiColumnLayout(page(tt.leftWidth))
+			if got != tt.want {
+				t.Errorf("multi-column = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

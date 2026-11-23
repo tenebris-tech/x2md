@@ -1341,6 +1341,11 @@ func (c *CompactLines) detectAndSplitMultiColumnLayout(items []*models.TextItem)
 		g := yGroups[key]
 		if item.X < midPoint {
 			g.left++
+			// Text that starts left of the midpoint and runs past it spans
+			// both sides by itself
+			if item.X+item.Width > midPoint {
+				g.right++
+			}
 		} else {
 			g.right++
 		}
@@ -1781,10 +1786,9 @@ func (c *CompactLines) combineTextWithContext(items []*models.TextItem, avgFontS
 	var lastItem *models.TextItem
 	endsWithSpace := false // Track trailing space to avoid repeated String() calls
 
-	// Calculate dynamic thresholds based on font size
-	// Word space is typically 0.2-0.33 em, so ~2.5-4 times font size for pixel gap
-	// Use a more conservative threshold (3x font size) to avoid false breaks
-	wordSpaceThreshold := avgFontSize * 3.0
+	// A word space is 0.25-0.33 em in common fonts; the gap between pieces
+	// of one word (kerning, rounding) stays well below 0.2 em
+	wordSpaceThreshold := avgFontSize * 0.2
 
 	for _, item := range items {
 		textToAdd := item.Text
@@ -1824,7 +1828,6 @@ func (c *CompactLines) combineTextWithContext(items []*models.TextItem, avgFontS
 					}
 				} else {
 					// Same line - check for word boundary using font-relative threshold
-					// Use corrected width if the stored width seems wrong
 					effectiveWidth := c.getEffectiveWidth(lastItem, avgFontSize)
 					xDistance := item.X - lastItem.X - effectiveWidth
 					needsSpace := c.needsSpaceBetweenWithThreshold(lastItem.Text, textToAdd, xDistance, wordSpaceThreshold)
@@ -1848,29 +1851,13 @@ func (c *CompactLines) combineTextWithContext(items []*models.TextItem, avgFontS
 	return text.String()
 }
 
-// getEffectiveWidth returns a reasonable width for the text item
-// If the stored width seems wrong (too small for the text length), estimate based on font size
+// getEffectiveWidth returns the width of a text item on the page, estimated
+// from its length when the item has none
 func (c *CompactLines) getEffectiveWidth(item *models.TextItem, avgFontSize float64) float64 {
-	if item.Width <= 0 {
-		// No width, estimate from text length
-		return float64(len(item.Text)) * avgFontSize * 0.5
-	}
-
-	// Check if width is plausible
-	// Average character width is roughly 0.5 * font size
-	// Minimum expected width = text length * fontSize * 0.3 (for narrow fonts)
-	textLen := len(strings.TrimSpace(item.Text))
-	if textLen == 0 {
+	if item.Width > 0 {
 		return item.Width
 	}
-
-	minExpectedWidth := float64(textLen) * avgFontSize * 0.3
-	if item.Width < minExpectedWidth {
-		// Width seems too small, use estimated width instead
-		return float64(textLen) * avgFontSize * 0.5
-	}
-
-	return item.Width
+	return float64(len(item.Text)) * avgFontSize * 0.5
 }
 
 // needsSpaceBetween determines if a space should be inserted between two text items

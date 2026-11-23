@@ -15,7 +15,10 @@ import (
 	"unicode/utf8"
 )
 
-// TextItem represents an extracted text element with position
+// TextItem represents an extracted text element with position. X and Y are
+// where the text starts on the page (Y grows downward); Width is how far the
+// text advances along its baseline, in the same page units, so the text ends
+// at X+Width.
 type TextItem struct {
 	X      float64
 	Y      float64
@@ -24,11 +27,6 @@ type TextItem struct {
 	Text   string
 	Font   string
 
-	// advance is the width of the text on the page (Width is in text space,
-	// before the text matrix scale is applied). Set for single show-text
-	// operations only; zero means unknown.
-	advance float64
-
 	// glyphRun marks text that began as a glyph fragment, which following
 	// fragments may be joined onto (see mergeGlyphRuns)
 	glyphRun bool
@@ -36,14 +34,27 @@ type TextItem struct {
 
 // Font represents a PDF font
 type Font struct {
-	Name       string
-	BaseFont   string
-	Encoding   string
-	ToUnicode  *CMap
+	Name      string
+	BaseFont  string
+	Encoding  string
+	ToUnicode *CMap
+	// Widths holds glyph widths in glyph space by character code, or by CID
+	// for a Type0 font
 	Widths     map[int]float64
 	FirstChar  int
 	LastChar   int
 	IsEmbedded bool
+
+	// missingWidth is the width of a code with no entry in Widths
+	// (MissingWidth, or DW for a Type0 font)
+	missingWidth float64
+	// widthScale converts glyph space widths to text space: 0.001, or the
+	// FontMatrix scale of a Type3 font
+	widthScale float64
+	// std holds built-in widths for a font without a Widths array
+	std *[224]uint16
+	// twoByte is set for Type0 fonts, whose codes are 2 bytes
+	twoByte bool
 }
 
 // TextExtractor extracts text from PDF pages
@@ -177,25 +188,7 @@ func (e *TextExtractor) parseFont(dict map[string]interface{}) *Font {
 		font.LastChar = int(lastChar)
 	}
 
-	// Parse widths
-	if widths, ok := dict["Widths"]; ok {
-		var widthArray []interface{}
-		switch w := widths.(type) {
-		case []interface{}:
-			widthArray = w
-		case *Reference:
-			widthObj, err := e.parser.GetObject(w.ObjectNum)
-			if err == nil && widthObj.Array != nil {
-				widthArray = widthObj.Array
-			}
-		}
-
-		for i, w := range widthArray {
-			if width, ok := w.(float64); ok {
-				font.Widths[font.FirstChar+i] = width
-			}
-		}
-	}
+	e.loadWidths(font, dict)
 
 	// Parse ToUnicode CMap
 	if toUnicode, ok := dict["ToUnicode"]; ok {
@@ -971,8 +964,19 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 							}
 						}
 
+						// The form's Matrix maps form space into the user
+						// space in which the form is drawn
+						formGS := *gs
+						if m := e.resolveArray(formObj.Dict["Matrix"]); len(m) >= 6 {
+							var matrix [6]float64
+							for i := range matrix {
+								matrix[i], _ = e.resolveNumber(m[i])
+							}
+							formGS.CTM = e.multiplyMatrix(matrix, gs.CTM)
+						}
+
 						// Parse Form XObject content with current graphics state
-						formItems, _ := e.parseFormXObject(stream, formMediaBox, gs)
+						formItems, _ := e.parseFormXObject(stream, formMediaBox, &formGS)
 						e.fonts = outerFonts
 						items = append(items, formItems...)
 					}
@@ -1022,21 +1026,22 @@ func (e *TextExtractor) showText(text string, gs *GraphicsState, mediaBox [4]flo
 	pageHeight := mediaBox[3] - mediaBox[1]
 	y = pageHeight - y
 
-	// Calculate dimensions
-	fontSize := gs.FontSize * math.Sqrt(tm[0]*tm[0]+tm[1]*tm[1])
-	width := e.calculateTextWidth(text, gs)
+	// Calculate dimensions: text space scales to the page by the length of
+	// the text matrix's x axis on the page
+	scale := math.Hypot(tm[0], tm[1])
+	fontSize := gs.FontSize * scale
+	advance := e.textAdvance(text, gs)
 
 	// Advance text position
-	gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, width, 0}, gs.TextMatrix)
+	gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, advance, 0}, gs.TextMatrix)
 
 	return TextItem{
-		X:       x,
-		Y:       y,
-		Width:   width,
-		Height:  fontSize,
-		Text:    decodedText,
-		Font:    gs.FontName,
-		advance: width * math.Sqrt(tm[0]*tm[0]+tm[1]*tm[1]),
+		X:      x,
+		Y:      y,
+		Width:  advance * scale,
+		Height: fontSize,
+		Text:   decodedText,
+		Font:   gs.FontName,
 	}
 }
 
@@ -1090,8 +1095,7 @@ func mergeGlyphRuns(items []TextItem) []TextItem {
 					prev.Text += " "
 				}
 				prev.Text += item.Text
-				prev.advance = item.X + item.advance - prev.X
-				prev.Width = prev.advance
+				prev.Width = item.X + item.Width - prev.X
 				continue
 			}
 		}
@@ -1118,9 +1122,8 @@ func drawnGlyphByGlyph(items []TextItem) bool {
 }
 
 // isGlyphFragment reports whether an item is a glyph or two drawn on its own
-// with a known width
 func isGlyphFragment(item *TextItem) bool {
-	return item.advance > 0 && utf8.RuneCountInString(item.Text) <= glyphRunMaxRunes
+	return item.Width > 0 && utf8.RuneCountInString(item.Text) <= glyphRunMaxRunes
 }
 
 // glyphRunGap returns the horizontal gap between two items if next is a
@@ -1135,7 +1138,7 @@ func glyphRunGap(prev, next *TextItem) (float64, bool) {
 	if math.Abs(prev.Y-next.Y) > 0.1*prev.Height {
 		return 0, false
 	}
-	gap := next.X - (prev.X + prev.advance)
+	gap := next.X - (prev.X + prev.Width)
 	if gap < -glyphRunJoinGap*prev.Height || gap > glyphRunSpaceGap*prev.Height {
 		return 0, false
 	}
@@ -1170,23 +1173,32 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 		textArray = operands
 	}
 
-	// Process array elements
+	// Process array elements. pos is the text position in text space relative
+	// to where the array starts; the item runs from the first glyph shown to
+	// the end of the last, without leading or trailing adjustments.
 	var currentText strings.Builder
-	startX := gs.TextMatrix[4]
-	startY := gs.TextMatrix[5]
 	startTM := gs.TextMatrix
+	var pos, textStart, textEnd float64
+	shown := false
 
 	for _, elem := range textArray {
 		switch v := elem.(type) {
 		case string:
 			if v != "[" && v != "]" {
 				currentText.WriteString(e.decodeText(v, gs.FontName))
-				width := e.calculateTextWidth(v, gs)
-				gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, width, 0}, gs.TextMatrix)
+				if !shown && v != "" {
+					textStart = pos
+					shown = true
+				}
+				advance := e.textAdvance(v, gs)
+				pos += advance
+				textEnd = pos
+				gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, advance, 0}, gs.TextMatrix)
 			}
 		case float64:
 			// Negative value moves text right, positive moves left
 			adjustment := -v / 1000.0 * gs.FontSize * (gs.HorizScaling / 100.0)
+			pos += adjustment
 
 			// If significant adjustment (space), emit current text
 			// Normal word spacing is ~250-333/1000 em (0.25-0.33 em)
@@ -1202,24 +1214,23 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 	}
 
 	if currentText.Len() > 0 {
-		tm := e.multiplyMatrix([6]float64{1, 0, 0, 1, startX, startY}, gs.CTM)
+		// Text space to page: the size on the page comes from the text
+		// matrix as well as the CTM, as many producers set a font size of 1
+		// and scale with Tm
+		tm := e.multiplyMatrix(startTM, gs.CTM)
+		scale := math.Hypot(tm[0], tm[1])
+		fontSize := gs.FontSize * scale
 
-		x := tm[4]
-		y := tm[5]
+		x := textStart*tm[0] + tm[4]
+		y := textStart*tm[1] + tm[5]
 
 		pageHeight := mediaBox[3] - mediaBox[1]
 		y = pageHeight - y
 
-		// The size on the page comes from the text matrix as well as the
-		// CTM: many producers set a font size of 1 and scale with Tm
-		scale := e.multiplyMatrix(startTM, gs.CTM)
-		fontSize := gs.FontSize * math.Sqrt(scale[0]*scale[0]+scale[1]*scale[1])
-		width := gs.TextMatrix[4] - startX
-
 		items = append(items, TextItem{
 			X:      x,
 			Y:      y,
-			Width:  width,
+			Width:  (textEnd - textStart) * scale,
 			Height: fontSize,
 			Text:   currentText.String(),
 			Font:   gs.FontName,
@@ -1479,33 +1490,6 @@ func decodeMacRomanChar(b byte) rune {
 		return rune(b)
 	}
 	return 0
-}
-
-func (e *TextExtractor) calculateTextWidth(text string, gs *GraphicsState) float64 {
-	font, ok := e.fonts[gs.FontName]
-	if !ok {
-		// Estimate width
-		return float64(len(text)) * gs.FontSize * 0.5 * (gs.HorizScaling / 100.0)
-	}
-
-	var width float64
-	data := []byte(text)
-
-	for _, b := range data {
-		charCode := int(b)
-		if w, ok := font.Widths[charCode]; ok {
-			width += w
-		} else {
-			width += 500 // Default width
-		}
-
-		if b == ' ' {
-			width += gs.WordSpacing * 1000 / gs.FontSize
-		}
-		width += gs.CharSpacing * 1000 / gs.FontSize
-	}
-
-	return width / 1000.0 * gs.FontSize * (gs.HorizScaling / 100.0)
 }
 
 // GetFonts returns the loaded fonts

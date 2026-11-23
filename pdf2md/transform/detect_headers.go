@@ -68,7 +68,7 @@ func (d *DetectHeaders) Transform(result *models.ParseResult) *models.ParseResul
 				}
 
 				height := int(lineItem.Height)
-				if height >= minHeightThreshold && height > min2ndLevelHeight {
+				if height >= minHeightThreshold && height > min2ndLevelHeight && !isListItem(lineItem.Text()) {
 					if height == maxHeight {
 						lineItem.Type = models.BlockTypeH1
 					} else {
