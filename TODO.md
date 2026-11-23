@@ -89,6 +89,15 @@ Verified on the `private/` corpus (405 distinct PDFs, 19 distinct DOCX files).
   separate words, text boxes and nested tables keep their text.
 - `WithExtractHeadersFooters` exists (off by default).
 - A single unsupported file is an error with or without `-output`.
+- `make score` converts every distinct PDF in `private/` twice, checks the
+  outputs match, and scores reading order against `pdftotext`; `make
+  score-accept` records the baseline (kept in `private/.score/`).
+- PDF text widths are in page units from the font's own metrics.
+- PDF tables drawn with borders are read from their ruling lines. Lines and
+  table rows are grouped by geometry, not Y buckets, and a column boundary is
+  a gap of at least one font height that persists down the rows.
+- Text cut short by a `[` or `]` glyph code in a TJ string is no longer lost.
+- DOCX lists that share an `abstractNum` continue one sequence.
 - Paragraph markers were checked against the document XML and, for the first
   round, against a browser rendering: the count is correct on every file.
 
@@ -125,23 +134,30 @@ Options for x2md's part:
 - C: nothing; the README sections "Source Path", "Page Markers" and
   "Paragraph Markers" already describe the output.
 
-### 2. Known limits in PDF table detection
+### 2. Known limits in PDF conversion
 
-- A table whose cells are centred against each other, so that the lines of
-  two cells in a row sit half a line apart, can lose its first row to plain
-  text. Seen in one certificate in the corpus. Rows are paired by Y bucket;
-  pairing half-line-offset lines as one row fixed that file and broke
-  2-column pages, so it was not kept.
+- A borderless cell with several lines, whose lines align with the lines of
+  its neighbour and with no extra space between rows, splits into one row per
+  line. Nothing on the page tells a row break from a line break there.
+- Tables with horizontal rules only (no vertical lines) are left to the
+  text-based detectors. 418 pages in the corpus have that shape.
 - The 2-column rule drops an aligned 2-column table that shares a page and
   column positions with page-layout text. Not seen in the corpus.
-- Some fonts report text widths two to three times too wide. Nothing relies
-  on width for a decision that matters, which is why.
+- Type0 fonts with a CMap other than Identity get the default width for every
+  code. Vertical writing is not handled.
+- Nested Form XObjects are not resolved, and the font table is shared by the
+  whole document, so fonts of the same name on different pages can collide.
+- White-on-white rules and tables made of shaded cells with no lines are not
+  detected.
 
-### 3. Known limits in DOCX numbering
+### 3. What `make score` cannot see
 
-- Counters are kept per `numId`. Word may continue one sequence across
-  several `numId`s that share an `abstractNum`. Not confirmed against the
-  specification, so not changed.
+`make score` measures reading order against `pdftotext` and that output is
+repeatable. It does not measure table quality: twice the score went up while
+running text was being split into table rows. After a change to table
+detection, read the output of a few large documents as well. A correctly
+rebuilt table can also score lower, because `pdftotext` reads a table column
+by column.
 
 ## How to continue
 
