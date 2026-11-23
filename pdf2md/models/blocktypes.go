@@ -172,7 +172,8 @@ func LinesToText(lineItems []*LineItem, disableInlineFormats bool) string {
 				if i > 0 {
 					text.WriteString(" | ")
 				}
-				text.WriteString(strings.TrimSpace(col))
+				// A pipe in a cell would end the cell: escape it
+				text.WriteString(strings.ReplaceAll(strings.TrimSpace(col), "|", `\|`))
 			}
 			text.WriteString(" |\n")
 

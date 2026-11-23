@@ -168,3 +168,16 @@ func TestTables_DifferentColumnsAcrossPagesNotMerged(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// An escaped pipe inside a cell is not a column: the table still continues
+// on the next page
+func TestTableAcrossPages_EscapedPipe(t *testing.T) {
+	got := runToMarkdown(false,
+		textPage(0, "| A | B |\n| --- | --- |\n| 1 | 2 |"),
+		textPage(1, "| a \\| b | 3 |"),
+	)
+	want := "| A | B |\n| --- | --- |\n| 1 | 2 |\n| a \\| b | 3 |\n\n"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}

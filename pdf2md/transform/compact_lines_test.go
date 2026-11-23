@@ -149,7 +149,7 @@ func TestNeedsSpaceBetween(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := c.needsSpaceBetween(tt.prevText, tt.nextText, tt.xDistance)
+			got := c.needsSpaceBetweenWithThreshold(tt.prevText, tt.nextText, tt.xDistance, 25)
 			if got != tt.want {
 				t.Errorf("needsSpaceBetween(%q, %q, %.1f) = %v, want %v",
 					tt.prevText, tt.nextText, tt.xDistance, got, tt.want)
@@ -573,7 +573,7 @@ func TestBoundTableRegionKeepsWrappedCells(t *testing.T) {
 		)
 	}
 
-	maxY, dataRows, consistentCols, interiorCols := c.boundTableRegionByColumns(itemsBelow(items, 100), 100, columns, nil, 540)
+	maxY, dataRows, consistentCols, interiorCols, _ := c.boundTableRegionByColumns(itemsBelow(items, 100), 100, columns, nil, 540)
 
 	if dataRows != 3 {
 		t.Errorf("dataRows = %d, want 3", dataRows)
@@ -601,7 +601,7 @@ func TestBoundTableRegionStopsAtProse(t *testing.T) {
 		items = append(items, tableItem(80, 200+float64(i)*16, "A paragraph of text below the table."))
 	}
 
-	maxY, dataRows, _, _ := c.boundTableRegionByColumns(itemsBelow(items, 100), 100, columns, nil, 540)
+	maxY, dataRows, _, _, _ := c.boundTableRegionByColumns(itemsBelow(items, 100), 100, columns, nil, 540)
 
 	if dataRows != 3 {
 		t.Errorf("dataRows = %d, want 3", dataRows)
@@ -666,7 +666,7 @@ func TestBoundTableRegionStopsAtIndentedText(t *testing.T) {
 		items = append(items, tableItem(215, 200+float64(i)*16, "An indented block of text below the table."))
 	}
 
-	maxY, dataRows, _, _ := c.boundTableRegionByColumns(itemsBelow(items, 100), 100, columns, nil, 540)
+	maxY, dataRows, _, _, _ := c.boundTableRegionByColumns(itemsBelow(items, 100), 100, columns, nil, 540)
 
 	if dataRows != 3 {
 		t.Errorf("dataRows = %d, want 3", dataRows)

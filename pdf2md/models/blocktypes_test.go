@@ -364,3 +364,15 @@ func TestLinesToTextNestedLists(t *testing.T) {
 		t.Errorf("LinesToText() = %q, want %q", got, want)
 	}
 }
+
+// A pipe in a table cell is escaped, so it does not end the cell
+func TestLinesToTextEscapesPipes(t *testing.T) {
+	lines := []*LineItem{
+		{IsTableRow: true, IsTableHeader: true, TableColumns: []string{"Command", "Meaning"}},
+		{IsTableRow: true, TableColumns: []string{"a | b", "pipe"}},
+	}
+	want := "| Command | Meaning |\n| --- | --- |\n| a \\| b | pipe |\n"
+	if got := LinesToText(lines, false); got != want {
+		t.Errorf("LinesToText() = %q, want %q", got, want)
+	}
+}

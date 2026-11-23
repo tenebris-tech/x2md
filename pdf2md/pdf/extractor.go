@@ -121,7 +121,31 @@ func (e *TextExtractor) ExtractPage(pageIndex int) ([]TextItem, error) {
 		return nil, fmt.Errorf("parsing content: %w", err)
 	}
 
-	return mergeGlyphRuns(items), nil
+	return visibleText(mergeGlyphRuns(items), mediaBox), nil
+}
+
+// visibleText drops text that cannot be seen: a position or size that is not
+// a finite number (from a degenerate matrix), or a place far off the page
+// (more than a page's width or height outside its box)
+func visibleText(items []TextItem, mediaBox [4]float64) []TextItem {
+	width, height := mediaBox[2]-mediaBox[0], mediaBox[3]-mediaBox[1]
+	kept := items[:0]
+	for _, item := range items {
+		values := []float64{item.X, item.Y, item.Width, item.Height}
+		finite := true
+		for _, v := range values {
+			finite = finite && !math.IsNaN(v) && !math.IsInf(v, 0)
+		}
+		if !finite {
+			continue
+		}
+		if width > 0 && height > 0 && (item.X > mediaBox[2]+width || item.X+item.Width < mediaBox[0]-width ||
+			item.Y > 2*height || item.Y < -height) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return kept
 }
 
 // loadPageFonts loads all fonts used on a page
@@ -956,16 +980,9 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 					// Get Form XObject content stream
 					stream, err := e.parser.DecodeStream(formObj)
 					if err == nil && len(stream) > 0 {
-						// Get Form XObject's BBox for coordinate transformation
-						formMediaBox := mediaBox
-						if bbox, ok := formObj.Dict["BBox"].([]interface{}); ok && len(bbox) >= 4 {
-							formMediaBox = [4]float64{
-								e.getFloat(bbox[0]),
-								e.getFloat(bbox[1]),
-								e.getFloat(bbox[2]),
-								e.getFloat(bbox[3]),
-							}
-						}
+						// The form's text is placed on the page by the CTM (and
+						// its Matrix), so its Y is flipped about the page's
+						// height like the page's own text, not the form's BBox
 
 						// Inside the form, its own fonts take precedence over
 						// fonts of the same name declared elsewhere
@@ -998,7 +1015,7 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 						}
 
 						// Parse Form XObject content with current graphics state
-						formItems, _ := e.parseFormXObject(stream, formMediaBox, &formGS)
+						formItems, _ := e.parseFormXObject(stream, mediaBox, &formGS)
 						e.fonts = outerFonts
 						items = append(items, formItems...)
 					}

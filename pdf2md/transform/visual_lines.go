@@ -31,6 +31,10 @@ const (
 	sameSizeTolerance = 0.25
 	sameSizeRatio     = 0.85
 
+	// defaultTextHeight stands in for the height of text when no item says
+	// what it is
+	defaultTextHeight = 12.0
+
 	// raisedMarkOffset is how far above its line's baseline, in the line's
 	// text height, a smaller item must sit to be a superscript
 	raisedMarkOffset = 0.15
@@ -52,19 +56,47 @@ const (
 	cellContinuationGap = 1.0
 )
 
-// textHeight returns an item's height, or 1 for an item without one
+// textHeight returns an item's height, or 1 for an item without one. Code
+// that groups items by their heights uses heightOr with the typical height
+// of the items instead.
 func textHeight(item *models.TextItem) float64 {
 	return math.Max(item.Height, 1)
 }
 
-// sameLine reports whether two baselines belong to one visual line
-func sameLine(y1, h1, y2, h2 float64) bool {
-	return math.Abs(y1-y2) <= sameLineTolerance*math.Min(math.Max(h1, 1), math.Max(h2, 1))
+// typicalHeight returns the median height of the items that have one, or
+// defaultTextHeight when none has
+func typicalHeight(items []*models.TextItem) float64 {
+	var heights []float64
+	for _, item := range items {
+		if item.Height > 0 {
+			heights = append(heights, item.Height)
+		}
+	}
+	if len(heights) == 0 {
+		return defaultTextHeight
+	}
+	sort.Float64s(heights)
+	return heights[len(heights)/2]
 }
 
-// onSameLine reports whether two text items are on one visual line
-func onSameLine(a, b *models.TextItem) bool {
-	return sameLine(a.Y, a.Height, b.Y, b.Height)
+// heightOr returns an item's height, or typical for an item without one
+func heightOr(item *models.TextItem, typical float64) float64 {
+	if item.Height > 0 {
+		return item.Height
+	}
+	return typical
+}
+
+// sameLine reports whether two baselines belong to one visual line
+func sameLine(y1, h1, y2, h2 float64) bool {
+	return math.Abs(y1-y2) <= sameLineTolerance*math.Min(h1, h2)
+}
+
+// onSameLine reports whether two text items are on one visual line, an item
+// without a height taking the other's (or typical, when neither has one)
+func onSameLine(a, b *models.TextItem, typical float64) bool {
+	ha, hb := heightOr(a, heightOr(b, typical)), heightOr(b, heightOr(a, typical))
+	return sameLine(a.Y, ha, b.Y, hb)
 }
 
 // visualLines groups text items into the lines they are drawn on, top to
@@ -80,13 +112,14 @@ func visualLines(items []*models.TextItem) [][]*models.TextItem {
 		return sorted[i].X < sorted[j].X
 	})
 
+	typical := typicalHeight(items)
 	var lines [][]*models.TextItem
 	var ref *models.TextItem // tallest item of the current line
 	for _, item := range sorted {
-		if ref != nil && onSameLine(ref, item) && fitsSizes(lines[len(lines)-1], item) {
+		if ref != nil && onSameLine(ref, item, typical) && fitsSizes(lines[len(lines)-1], item, typical) {
 			last := len(lines) - 1
 			lines[last] = append(lines[last], item)
-			if textHeight(item) > textHeight(ref) {
+			if heightOr(item, typical) > heightOr(ref, typical) {
 				ref = item
 			}
 			continue
@@ -103,10 +136,10 @@ func visualLines(items []*models.TextItem) [][]*models.TextItem {
 
 // fitsSizes reports whether an item's baseline agrees with every item of
 // about its size already on a line
-func fitsSizes(line []*models.TextItem, item *models.TextItem) bool {
-	h := textHeight(item)
+func fitsSizes(line []*models.TextItem, item *models.TextItem, typical float64) bool {
+	h := heightOr(item, typical)
 	for _, other := range line {
-		oh := textHeight(other)
+		oh := heightOr(other, typical)
 		small, large := math.Min(h, oh), math.Max(h, oh)
 		if small/large > sameSizeRatio && math.Abs(other.Y-item.Y) > sameSizeTolerance*small {
 			return false
@@ -143,6 +176,7 @@ func lineTop(line []*models.TextItem) float64 {
 // bottom, their items ordered by column, then line, then X.
 func (c *CompactLines) tableRows(items []*models.TextItem, columns []float64, extents [][2]float64) [][]*models.TextItem {
 	colOf := c.columnsOf(items, columns, extents)
+	typical := typicalHeight(items)
 	type fragment struct {
 		col         int
 		line        int
@@ -165,7 +199,7 @@ func (c *CompactLines) tableRows(items []*models.TextItem, columns []float64, ex
 				byCol[col] = f
 				order = append(order, col)
 			}
-			h := textHeight(item)
+			h := heightOr(item, typical)
 			f.items = append(f.items, item)
 			f.top = math.Min(f.top, item.Y-glyphAscent*h)
 			f.bottom = math.Max(f.bottom, item.Y+glyphDescent*h)
@@ -201,36 +235,52 @@ func (c *CompactLines) tableRows(items []*models.TextItem, columns []float64, ex
 		}
 	}
 
-	// Pair fragments in different columns whose extents overlap
+	// Pair fragments in different columns whose extents overlap: a sweep
+	// in order of top edge, keeping the fragments still open (whose bottom
+	// is below the current top)
+	order := make([]int, len(frags))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return frags[order[a]].top < frags[order[b]].top })
 	paired := make([]bool, len(frags))
-	for i, a := range frags {
-		for j := i + 1; j < len(frags); j++ {
-			b := frags[j]
-			if b.col != a.col && a.top < b.bottom && b.top < a.bottom {
+	var open []int
+	for _, i := range order {
+		f := frags[i]
+		kept := open[:0]
+		for _, j := range open {
+			if frags[j].bottom > f.top {
+				kept = append(kept, j)
+			}
+		}
+		open = kept
+		for _, j := range open {
+			if frags[j].col != f.col && frags[j].top < f.bottom {
 				union(i, j)
 				paired[i], paired[j] = true, true
 			}
 		}
+		open = append(open, i)
 	}
 
 	// A fragment paired with nothing continues the nearest cell in its column
+	previous := make([]int, len(frags)) // the fragment above in the same column
+	next := make([]int, len(frags))     // the fragment below in the same column
+	lastInColumn := make(map[int]int)
 	for i, f := range frags {
-		if paired[i] {
+		previous[i], next[i] = -1, -1
+		if j, ok := lastInColumn[f.col]; ok {
+			previous[i], next[j] = j, i
+		}
+		lastInColumn[f.col] = i
+	}
+	for i, f := range frags {
+		// A line in a column past the first that starts left of the column
+		// is a title over the next rows, not more text of a cell
+		if paired[i] || (f.col > 0 && f.col < len(columns) && f.items[0].X < columns[f.col]-exactAlignment) {
 			continue
 		}
-		above, below := -1, -1
-		for j := i - 1; j >= 0; j-- {
-			if frags[j].col == f.col {
-				above = j
-				break
-			}
-		}
-		for j := i + 1; j < len(frags); j++ {
-			if frags[j].col == f.col {
-				below = j
-				break
-			}
-		}
+		above, below := previous[i], next[i]
 		limit := cellContinuationGap * f.height
 		gapAbove, gapBelow := math.Inf(1), math.Inf(1)
 		if above >= 0 {
@@ -317,35 +367,54 @@ var (
 	trailingLeaderPattern = regexp.MustCompile(`\s*(?:[.·…‥]\s*){3,}$`)
 )
 
-// trimLeader removes leader dots from the end of a cell's text
+// trimLeader removes leader dots from the end of a cell's text, unless they
+// are all of it (a cell whose value is "…")
 func trimLeader(text string) string {
-	return strings.TrimSpace(trailingLeaderPattern.ReplaceAllString(text, ""))
+	if trimmed := strings.TrimSpace(trailingLeaderPattern.ReplaceAllString(text, "")); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(text)
 }
 
 // lineRuns splits a visual line into runs of text: a new run starts where
 // the gap from the end of the text before it is at least columnGap text
-// heights. Leader dots and blank items are not text: they are part of the
-// gap.
+// heights. Blank items, and leader dots between a title and its page
+// number, are not text: they are part of the gap.
 func lineRuns(line []*models.TextItem) []textRun {
+	typical := typicalHeight(line)
+	isText := func(item *models.TextItem) bool { return strings.TrimSpace(item.Text) != "" }
+
+	// Leader dots are filler only between text on both sides of them; dots
+	// that are a line's only text, or that end it, are a value
+	firstText, lastText := -1, -1
+	for i, item := range line {
+		if isText(item) && !isLeader(item) {
+			if firstText < 0 {
+				firstText = i
+			}
+			lastText = i
+		}
+	}
+
 	var runs []textRun
-	for _, item := range line {
-		if strings.TrimSpace(item.Text) == "" || isLeader(item) {
+	var runHeight float64
+	for i, item := range line {
+		if !isText(item) || (isLeader(item) && i > firstText && i < lastText) {
 			continue
 		}
 		end := item.X + item.Width
+		h := heightOr(item, typical)
 		if n := len(runs); n > 0 {
 			last := &runs[n-1]
-			h := textHeight(item)
-			for _, other := range last.items {
-				h = math.Max(h, textHeight(other))
-			}
-			if item.X-last.end < columnGap*h {
+			if item.X-last.end < columnGap*math.Max(runHeight, h) {
 				last.items = append(last.items, item)
 				last.end = math.Max(last.end, end)
+				runHeight = math.Max(runHeight, h)
 				continue
 			}
 		}
 		runs = append(runs, textRun{items: []*models.TextItem{item}, x: item.X, end: end})
+		runHeight = h
 	}
 	return runs
 }

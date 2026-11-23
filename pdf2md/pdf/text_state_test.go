@@ -5,7 +5,10 @@
 
 package pdf
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // A standard 14 font with no /Encoding uses its built-in encoding
 // (StandardEncoding), where code 0x27 is quoteright (222 in Helvetica);
@@ -179,5 +182,44 @@ func TestType0ToUnicodeWithOneByteCodespace(t *testing.T) {
 	e.fonts["F1"] = font
 	if got := e.decodeText("\x00\x24\x00\x26", "F1"); got != "AC" {
 		t.Errorf("decoded %q, want \"AC\"", got)
+	}
+}
+
+// Text whose position is not a finite number (a degenerate matrix) or that
+// lies far off the page is not extracted
+func TestVisibleText(t *testing.T) {
+	items := []TextItem{
+		{X: 50, Y: 100, Width: 10, Height: 10, Text: "kept"},
+		{X: math.Inf(1), Y: 100, Width: 10, Height: 10, Text: "inf"},
+		{X: 50, Y: 100, Width: math.NaN(), Height: 10, Text: "nan"},
+		{X: 1e9, Y: 100, Width: 10, Height: 10, Text: "far"},
+		{X: 50, Y: -5000, Width: 10, Height: 10, Text: "above"},
+	}
+	got := visibleText(items, [4]float64{0, 0, 612, 792})
+	if len(got) != 1 || got[0].Text != "kept" {
+		t.Errorf("got %+v, want only \"kept\"", got)
+	}
+}
+
+// Text in a Form XObject whose BBox is smaller than the page is placed on the
+// page like the page's own text: Y is flipped about the page height
+func TestFormXObjectYOnPage(t *testing.T) {
+	e := NewTextExtractor(NewParser(nil))
+	font := e.parseFont(testFont())
+	font.Name = "F1"
+	e.fonts["F1"] = font
+	e.xobjects["Fm1"] = &Object{
+		Dict: map[string]interface{}{
+			"Subtype": "/Form",
+			"BBox":    []interface{}{0.0, 0.0, 100.0, 50.0},
+		},
+		Stream: []byte("BT /F1 10 Tf 50 300 Td (A) Tj ET"),
+	}
+	items, err := e.parseContentStream([]byte("/Fm1 Do"), [4]float64{0, 0, 612, 792})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item := oneItem(t, items); !near(item.Y, 492) {
+		t.Errorf("Y = %v, want 492", item.Y)
 	}
 }

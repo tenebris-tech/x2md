@@ -285,9 +285,10 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 // across pages; it is never part of the output
 const pageBreakLine = "\x00page-break"
 
-// tableRowColumns returns the number of cells in a Markdown table row
+// tableRowColumns returns the number of cells in a Markdown table row: its
+// pipes less one, not counting pipes escaped inside cells (\|)
 func tableRowColumns(row string) int {
-	return strings.Count(row, "|") - 1
+	return strings.Count(row, "|") - strings.Count(row, `\|`) - 1
 }
 
 // deduplicateTableHeader removes duplicate table headers from continuation tables.
