@@ -16,9 +16,6 @@ import (
 
 // Constants for table detection and text layout analysis
 const (
-	// yPositionTolerance is the tolerance for grouping items on the same line
-	yPositionTolerance = 5.0
-
 	// maxPageContentY is the maximum Y value for page content (footer threshold)
 	maxPageContentY = 700.0
 
@@ -28,20 +25,11 @@ const (
 	// columnAlignmentTolerance is the tolerance for aligning items to columns
 	columnAlignmentTolerance = 20.0
 
-	// columnBucketSize groups X positions for column detection
-	columnBucketSize = 15.0
-
 	// referenceColumnMinGap is the minimum gap between reference ID and description
 	referenceColumnMinGap = 30.0
 
-	// minColumnItemCount is the minimum items at an X position to be a column
-	minColumnItemCount = 3
-
 	// maxHeaderItemLength is the maximum character length for header items
 	maxHeaderItemLength = 30
-
-	// tableRegionTolerance extends table region boundaries
-	tableRegionTolerance = 10.0
 
 	// largeGapThreshold is the gap size that definitely needs a space
 	// (only used when characters are not both alphanumeric)
@@ -57,12 +45,6 @@ const (
 	// (only used for non-alphanumeric boundaries)
 	minSpaceGapThreshold = 10.0
 
-	// minRowThreshold is the minimum row threshold for table grouping
-	minRowThreshold = 35.0
-
-	// minMultiLineCellThreshold is the minimum threshold for multi-line cell detection
-	minMultiLineCellThreshold = 20.0
-
 	// referenceIDMinLen is the minimum length for a reference ID like [CC1]
 	referenceIDMinLen = 3
 
@@ -75,18 +57,18 @@ const (
 	// referenceAlignmentThreshold is the percentage of items that must align
 	referenceAlignmentThreshold = 0.8
 
-	// yLineWrapThreshold is the Y distance that indicates a line wrap
-	// Must be larger than the line grouping threshold (mostUsedDistance/2, typically 5-8px)
-	// to avoid false word breaks from slight Y variations in same-line text
-	yLineWrapThreshold = 10.0
+	// multiColumnMinGutter is the narrowest gap, in text heights, between the
+	// two columns of a 2-column page; text on a line closer together than
+	// that runs across the middle of the page
+	multiColumnMinGutter = 1.0
 
-	// yTolerance is the tolerance for considering items on the same line
-	yTolerance = 2.0
+	// ruledRowCoverage is the share of a table's width a horizontal rule must
+	// run across to separate its rows
+	ruledRowCoverage = 0.8
 
-	// maxWrappedCellRows is the number of rows starting at an interior column only that
-	// are kept after the last data row of a table, as the wrapped lines of its cells.
-	// Anything beyond that is indented text below the table.
-	maxWrappedCellRows = 8
+	// minAlignedRows is the fewest rows that align to the same columns for
+	// text to be a table on alignment alone
+	minAlignedRows = 3
 
 	// maxTableRowGap is the number of consecutive non-tabular rows tolerated inside a
 	// table region before the region is considered ended. Allows single-column wrapped
@@ -129,8 +111,9 @@ type lineGroup struct {
 	items      []*models.TextItem
 	isTableRow bool
 	isHeader   bool
-	columns    []float64 // column X positions for table rows
-	cells      []string  // text of each column, when known (ruled tables)
+	columns    []float64    // column X positions for table rows
+	extents    [][2]float64 // where each column's text lies, when known
+	cells      []string     // text of each column, when known (ruled tables)
 }
 
 // Transform groups text items into lines
@@ -166,7 +149,7 @@ func (c *CompactLines) Transform(result *models.ParseResult) *models.ParseResult
 					if group.cells != nil {
 						lineItem.TableColumns = group.cells
 					} else {
-						lineItem.TableColumns = c.extractColumnTexts(group.items, group.columns)
+						lineItem.TableColumns = c.extractColumnTexts(group.items, group.columns, group.extents)
 					}
 				}
 				lineItems = append(lineItems, lineItem)
@@ -181,27 +164,22 @@ func (c *CompactLines) Transform(result *models.ParseResult) *models.ParseResult
 
 // extractColumnTexts extracts and combines text content for each table column.
 //
-// Given a set of text items and column X positions, this function:
-//  1. Assigns each item to a column based on its X position (using getColumn)
-//  2. Sorts items within each column by Y position, then X position
+// Given a set of text items, the column X positions and (when known) the extent of each
+// column, this function:
+//  1. Assigns each line's runs of text to columns (see columnsOf); leader dots are dropped
+//  2. Orders the items of each column by line, then X
 //  3. Combines the text using combineText, which handles spacing and line wraps
 //
 // Returns a slice of strings where each element is the combined text for that column.
-// Multi-line cell content is joined with appropriate spacing (handled by combineText).
-func (c *CompactLines) extractColumnTexts(items []*models.TextItem, columns []float64) []string {
+func (c *CompactLines) extractColumnTexts(items []*models.TextItem, columns []float64, extents [][2]float64) []string {
 	if len(columns) == 0 {
 		return nil
 	}
 
-	// Group items by column
+	colOf := c.columnsOf(items, columns, extents)
 	columnItems := make([][]*models.TextItem, len(columns))
-	for i := range columnItems {
-		columnItems[i] = []*models.TextItem{}
-	}
-
 	for _, item := range items {
-		col := c.getColumn(item.X, columns)
-		if col < len(columnItems) {
+		if col, ok := colOf[item]; ok && col < len(columnItems) {
 			columnItems[col] = append(columnItems[col], item)
 		}
 	}
@@ -210,14 +188,7 @@ func (c *CompactLines) extractColumnTexts(items []*models.TextItem, columns []fl
 	result := make([]string, len(columns))
 	for i, colItems := range columnItems {
 		if len(colItems) > 0 {
-			// Sort by Y then X within column
-			sort.Slice(colItems, func(a, b int) bool {
-				if math.Abs(colItems[a].Y-colItems[b].Y) > yTolerance {
-					return colItems[a].Y < colItems[b].Y
-				}
-				return colItems[a].X < colItems[b].X
-			})
-			result[i] = strings.TrimSpace(c.combineText(colItems))
+			result[i] = trimLeader(c.combineText(readingOrder(colItems)))
 		}
 	}
 
@@ -260,19 +231,19 @@ func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, rules 
 		var lines []lineGroup
 		splitX := 0.0
 		if len(rest) > 0 {
-			lines, splitX = c.groupTextLines(rest, mostUsedDistance, footerThreshold)
+			lines, splitX = c.groupTextLines(rest, rules, mostUsedDistance, footerThreshold)
 		}
 		return placeRuledTables(lines, tables, splitX)
 	}
 
-	lines, _ := c.groupTextLines(textItems, mostUsedDistance, footerThreshold)
+	lines, _ := c.groupTextLines(textItems, rules, mostUsedDistance, footerThreshold)
 	return lines
 }
 
 // groupTextLines groups text items into lines and text-based tables. When
 // the page is read as two columns, splitX is the left edge of the right
 // column (0 otherwise).
-func (c *CompactLines) groupTextLines(textItems []*models.TextItem, mostUsedDistance int, footerThreshold float64) (lines []lineGroup, splitX float64) {
+func (c *CompactLines) groupTextLines(textItems []*models.TextItem, rules []models.Rule, mostUsedDistance int, footerThreshold float64) (lines []lineGroup, splitX float64) {
 	// Identify table regions on the page
 	tableRegions := c.detectTableRegions(textItems, mostUsedDistance, footerThreshold)
 
@@ -282,8 +253,8 @@ func (c *CompactLines) groupTextLines(textItems []*models.TextItem, mostUsedDist
 
 		if isMultiColumn {
 			// Process each column separately, then combine
-			leftLines := c.groupTextItemsByLine(leftItems, mostUsedDistance)
-			rightLines := c.groupTextItemsByLine(rightItems, mostUsedDistance)
+			leftLines := visualLines(leftItems)
+			rightLines := visualLines(rightItems)
 
 			result := make([]lineGroup, 0, len(leftLines)+len(rightLines))
 			for _, line := range leftLines {
@@ -300,7 +271,7 @@ func (c *CompactLines) groupTextLines(textItems []*models.TextItem, mostUsedDist
 		}
 
 		// Standard Y-based grouping for single-column layouts
-		lines := c.groupTextItemsByLine(textItems, mostUsedDistance)
+		lines := visualLines(textItems)
 		result := make([]lineGroup, len(lines))
 		for i, line := range lines {
 			result[i] = lineGroup{items: line, isTableRow: false}
@@ -332,11 +303,11 @@ func (c *CompactLines) groupTextLines(textItems []*models.TextItem, mostUsedDist
 			if len(currentGroup) > 0 {
 				if inTable && currentTableRegion != nil {
 					// Process as table
-					tableLines := c.groupAsTableWithMetadata(currentGroup, currentTableRegion, mostUsedDistance)
+					tableLines := c.groupAsTableWithMetadata(currentGroup, currentTableRegion, rules)
 					allLines = append(allLines, tableLines...)
 				} else {
 					// Process as regular text
-					lines := c.groupTextItemsByLine(currentGroup, mostUsedDistance)
+					lines := visualLines(currentGroup)
 					for _, line := range lines {
 						allLines = append(allLines, lineGroup{items: line, isTableRow: false})
 					}
@@ -352,10 +323,10 @@ func (c *CompactLines) groupTextLines(textItems []*models.TextItem, mostUsedDist
 	// Process final group
 	if len(currentGroup) > 0 {
 		if inTable && currentTableRegion != nil {
-			tableLines := c.groupAsTableWithMetadata(currentGroup, currentTableRegion, mostUsedDistance)
+			tableLines := c.groupAsTableWithMetadata(currentGroup, currentTableRegion, rules)
 			allLines = append(allLines, tableLines...)
 		} else {
-			lines := c.groupTextItemsByLine(currentGroup, mostUsedDistance)
+			lines := visualLines(currentGroup)
 			for _, line := range lines {
 				allLines = append(allLines, lineGroup{items: line, isTableRow: false})
 			}
@@ -375,7 +346,8 @@ func (c *CompactLines) groupTextLines(textItems []*models.TextItem, mostUsedDist
 
 // groupAsTableWithMetadata converts text items into table rows with associated metadata.
 //
-// It delegates to groupAsTable for the actual row grouping, then wraps each row
+// It delegates to tableRows for the actual row grouping (or, where horizontal rules
+// separate the rows, to the bands between the rules), then wraps each row
 // in a lineGroup struct with table-specific metadata:
 //   - isTableRow: always true for items in a table region
 //   - isHeader: true only for the first row if region.hasHeader is set
@@ -383,8 +355,13 @@ func (c *CompactLines) groupTextLines(textItems []*models.TextItem, mostUsedDist
 //
 // The first row is marked as header only if the table region was detected with
 // a header row (e.g., via known header patterns or header-based detection).
-func (c *CompactLines) groupAsTableWithMetadata(items []*models.TextItem, region *tableRegion, mostUsedDistance int) []lineGroup {
-	rows := c.groupAsTable(items, region.columns, mostUsedDistance)
+func (c *CompactLines) groupAsTableWithMetadata(items []*models.TextItem, region *tableRegion, rules []models.Rule) []lineGroup {
+	rows := c.tableRows(items, region.columns, region.extents)
+	// Rules that cut the table into at least half as many rows as its text
+	// lines up into are row separators; a rule under the header alone is not
+	if ruled := c.rowsBetweenRules(items, region.columns, region.extents, rules); 2*len(ruled) >= len(rows) {
+		rows = ruled
+	}
 	result := make([]lineGroup, len(rows))
 
 	for i, row := range rows {
@@ -394,17 +371,79 @@ func (c *CompactLines) groupAsTableWithMetadata(items []*models.TextItem, region
 			isTableRow: true,
 			isHeader:   isHeader,
 			columns:    region.columns,
+			extents:    region.extents,
 		}
 	}
 
 	return result
 }
 
+// rowsBetweenRules groups the items of a table into the bands between the
+// horizontal rules drawn across it, one row per band, or returns nil when no
+// rule runs across the table between its lines. Where rows are ruled off,
+// the lines between two rules are one row however they line up.
+func (c *CompactLines) rowsBetweenRules(items []*models.TextItem, columns []float64, extents [][2]float64, rules []models.Rule) [][]*models.TextItem {
+	if len(items) == 0 {
+		return nil
+	}
+	left, right := items[0].X, items[0].X+items[0].Width
+	top, bottom := math.Inf(1), math.Inf(-1)
+	for _, item := range items {
+		left, right = math.Min(left, item.X), math.Max(right, item.X+item.Width)
+		h := textHeight(item)
+		top, bottom = math.Min(top, item.Y-glyphAscent*h), math.Max(bottom, item.Y+glyphDescent*h)
+	}
+
+	// Rules across (nearly) the whole width of the table, inside it
+	var breaks []float64
+	for _, r := range rules {
+		if r.Y1 != r.Y2 || r.Y1 <= top || r.Y1 >= bottom {
+			continue
+		}
+		covered := math.Min(r.X2, right) - math.Max(r.X1, left)
+		if covered >= ruledRowCoverage*(right-left) {
+			breaks = append(breaks, r.Y1)
+		}
+	}
+	if len(breaks) == 0 {
+		return nil
+	}
+	sort.Float64s(breaks)
+
+	bands := make([][]*models.TextItem, len(breaks)+1)
+	for _, item := range items {
+		_, middle := itemPoint(item)
+		b := sort.SearchFloat64s(breaks, middle)
+		bands[b] = append(bands[b], item)
+	}
+
+	var rows [][]*models.TextItem
+	for _, band := range bands {
+		if len(band) == 0 {
+			continue
+		}
+		colOf := c.columnsOf(band, columns, extents)
+		byCol := make([][]*models.TextItem, len(columns)+1)
+		for _, item := range readingOrder(band) {
+			if col, ok := colOf[item]; ok {
+				byCol[col] = append(byCol[col], item)
+			}
+		}
+		var row []*models.TextItem
+		for _, cell := range byCol {
+			row = append(row, cell...)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 // tableRegion represents a detected table area on the page
 type tableRegion struct {
 	minY, maxY float64
 	columns    []float64
-	hasHeader  bool // whether this table has a detected header row
+	extents    [][2]float64 // where each column's text lies, when known
+	hasHeader  bool         // whether this table has a detected header row
 }
 
 // detectTableRegions identifies table regions on a page using multiple detection methods.
@@ -431,8 +470,8 @@ func (c *CompactLines) detectTableRegions(items []*models.TextItem, mostUsedDist
 	// (see boundTableRegionByColumns). maxY is the end of the run of rows that align to
 	// the header columns, so the region stops at the true end of the table instead of
 	// extending to the page footer and absorbing the prose below it.
-	headerY, columns, maxY := c.findTableHeader(items, mostUsedDistance)
-	if headerY >= 0 && len(columns) >= 2 {
+	if header := c.findTableHeader(items); header != nil {
+		headerY, columns, maxY := header.y, header.columns, header.maxY
 		// Find items that belong to this table (after header, within the bounded region)
 		// Exclude items near bottom of page (likely footer) using dynamic threshold
 		var tableItems []*models.TextItem
@@ -440,23 +479,25 @@ func (c *CompactLines) detectTableRegions(items []*models.TextItem, mostUsedDist
 			if strings.TrimSpace(item.Text) == "" {
 				continue
 			}
-			if item.Y >= headerY && item.Y <= maxY+yPositionTolerance && item.Y < footerThreshold {
+			if item.Y >= headerY && item.Y <= maxY && item.Y < footerThreshold {
 				tableItems = append(tableItems, item)
 			}
 		}
 
 		// Validate items-to-columns ratio to avoid false positives on paragraph text
-		if c.validateTableStructure(tableItems, columns, mostUsedDistance) {
-			// Accept as a table when either a known continuation header pattern is present
-			// (Method 1a, e.g. "Version Date Description") or the cells span multiple lines
-			// (Method 1b, classic wrapped-cell table).
+		if c.validateTableStructure(tableItems, columns) {
+			// Accept as a table when a known continuation header pattern is present
+			// (Method 1a, e.g. "Version Date Description"), the cells span multiple lines
+			// (Method 1b, classic wrapped-cell table), or there are as many rows as an
+			// aligned table needs (Method 1c, single-line rows under the header).
 			knownHeader := len(tableItems) >= 3 && c.isKnownTableHeader(tableItems, columns)
-			multiLine := len(tableItems) >= 6 && c.detectMultiLineCells(tableItems, columns, mostUsedDistance)
-			if knownHeader || multiLine {
+			multiLine := len(tableItems) >= 6 && c.detectMultiLineCells(tableItems, columns, header.extents)
+			if knownHeader || multiLine || header.rows >= minAlignedRows {
 				regions = append(regions, &tableRegion{
 					minY:      headerY,
 					maxY:      maxY,
 					columns:   columns,
+					extents:   header.extents,
 					hasHeader: true,
 				})
 			}
@@ -481,7 +522,7 @@ func (c *CompactLines) detectTableRegions(items []*models.TextItem, mostUsedDist
 
 	// Method 3: Look for space-aligned tables (consistent column positions across rows)
 	if len(regions) == 0 {
-		alignedRegions := c.detectAlignedTables(items, mostUsedDistance, footerThreshold)
+		alignedRegions := c.detectAlignedTables(items, footerThreshold)
 		regions = append(regions, alignedRegions...)
 	}
 
@@ -491,17 +532,18 @@ func (c *CompactLines) detectTableRegions(items []*models.TextItem, mostUsedDist
 // boundTableRegionByColumns determines the true vertical extent of a header-based table and
 // how many of its columns are consistently populated.
 //
-// Starting just below headerY, it groups items into rows and, for each row, counts how many
-// of the detected columns receive an item (within columnAlignmentTolerance). A row is part of
-// the table when it hits at least two columns. The scan extends maxY through such rows,
-// tolerating up to maxTableRowGap consecutive non-tabular rows (for single-column wrapped
-// cells) before stopping. This prevents prose below a table - or an entire prose page under a
-// falsely detected header - from being pulled into the region.
+// below holds the text under the header. It is grouped into table rows (see tableRows),
+// and each row's runs of text are matched to the columns: a run hits a column when it
+// starts within columnAlignmentTolerance of the column's start, overlaps the column's
+// header, or (past the first column) lies between the column's start and the next one's
+// (right-aligned and centred cells). A row is part of the table when it hits at
+// least two columns. A row with a run crossing a column boundary is running text (table
+// cells keep to their columns) and ends the table. The scan extends maxY through table
+// rows, tolerating up to maxTableRowGap consecutive rows that hit fewer columns, so prose below a table - or
+// an entire prose page under a falsely detected header - is not pulled into the region.
 //
-// A row that starts at an interior column only is a wrapped cell (for example a date broken
-// over two lines), not text outside the table, which starts at the left margin. It neither
-// counts as a data row nor ends the table. After the last data row, at most
-// maxWrappedCellRows such rows are kept, so indented text below a table is not absorbed.
+// A row with text in interior columns only (an empty first cell) neither counts as a data
+// row nor ends the table; the table extends over it only when a data row follows.
 //
 // Returns the Y of the lowest item in the table (maxY), the number of tabular data rows, the number of
 // columns hit by at least columnConsistencyThreshold of those rows (consistentCols), and how
@@ -512,55 +554,36 @@ func (c *CompactLines) detectTableRegions(items []*models.TextItem, mostUsedDist
 // line-ending fragments and hyphens cluster). Neither is interior, so prose yields
 // interiorCols == 0 and is rejected by the caller. Real tables have at least one genuine
 // interior column.
-func (c *CompactLines) boundTableRegionByColumns(items []*models.TextItem, headerY float64, columns []float64, mostUsedDistance int) (maxY float64, dataRows int, consistentCols int, interiorCols int) {
-	yThreshold := float64(mostUsedDistance) / 2.0
-	if yThreshold < 5 {
-		yThreshold = 5
-	}
-
-	// Right text edge of the page, used to identify the right-margin column.
-	rightEdge := 0.0
-	for _, item := range items {
-		if right := item.X + item.Width; right > rightEdge {
-			rightEdge = right
-		}
-	}
-
-	buckets := make(map[int][]*models.TextItem)
-	for _, item := range items {
-		if strings.TrimSpace(item.Text) == "" {
-			continue
-		}
-		if item.Y <= headerY+yPositionTolerance {
-			continue // skip header row and anything above it
-		}
-		b := int(item.Y / yThreshold)
-		buckets[b] = append(buckets[b], item)
-	}
-
-	keys := make([]int, 0, len(buckets))
-	for k := range buckets {
-		keys = append(keys, k)
-	}
-	sort.Ints(keys)
-
+func (c *CompactLines) boundTableRegionByColumns(below []*models.TextItem, headerY float64, columns []float64, extents [][2]float64, rightEdge float64) (maxY float64, dataRows int, consistentCols int, interiorCols int) {
 	colHits := make([]int, len(columns))
 	maxY = headerY
 	gap := 0
-	wrapped := 0
 
-	for _, k := range keys {
+	for _, row := range c.tableRows(below, columns, extents) {
 		hit := make([]bool, len(columns))
 		rowMaxY := 0.0
-		for _, item := range buckets[k] {
-			if item.Y > rowMaxY {
-				rowMaxY = item.Y
-			}
-			for ci, col := range columns {
-				if math.Abs(item.X-col) < columnAlignmentTolerance {
-					hit[ci] = true
+		crosses := false
+		for _, item := range row {
+			rowMaxY = math.Max(rowMaxY, item.Y)
+		}
+		for _, line := range visualLines(row) {
+			for _, r := range lineRuns(line) {
+				if runCrosses(r, columns) {
+					crosses = true
+				}
+				col := c.runColumn(r, columns, extents)
+				inSlot := r.x >= columns[col]-columnAlignmentTolerance &&
+					(col+1 == len(columns) || r.end <= columns[col+1]+columnAlignmentTolerance)
+				if math.Abs(r.x-columns[col]) < columnAlignmentTolerance || (col > 0 && inSlot) ||
+					(extents != nil && math.Min(r.end, extents[col][1]) > math.Max(r.x, extents[col][0])) {
+					hit[col] = true
 				}
 			}
+		}
+		if crosses {
+			// Text running across a column boundary is running text, not a
+			// row: the table ends above it
+			break
 		}
 		n := 0
 		for _, h := range hit {
@@ -578,15 +601,9 @@ func (c *CompactLines) boundTableRegionByColumns(items []*models.TextItem, heade
 			}
 			maxY = rowMaxY
 			gap = 0
-			wrapped = 0
 		} else if n == 1 && !hit[0] {
-			// Wrapped cell. However many there are, they are inside the table
-			// if a data row follows; after the last data row only the first
-			// few are taken to belong to it.
-			wrapped++
-			if dataRows > 0 && wrapped <= maxWrappedCellRows {
-				maxY = rowMaxY
-			}
+			// Interior cells only: inside the table if a data row follows
+			continue
 		} else {
 			gap++
 			if gap > maxTableRowGap {
@@ -611,27 +628,16 @@ func (c *CompactLines) boundTableRegionByColumns(items []*models.TextItem, heade
 	return maxY, dataRows, consistentCols, interiorCols
 }
 
-// isKnownTableHeader checks if the items at the header position look like a known table header
+// isKnownTableHeader checks if the first line of the items looks like a known table header
 // This helps detect continuation tables that may have fewer items
 func (c *CompactLines) isKnownTableHeader(items []*models.TextItem, columns []float64) bool {
-	// Group items by Y to find the header row
 	if len(items) == 0 || len(columns) < 2 {
 		return false
 	}
 
-	// Find items at the header Y (first Y position)
-	minY := items[0].Y
-	for _, item := range items {
-		if item.Y < minY {
-			minY = item.Y
-		}
-	}
-
 	var headerTexts []string
-	for _, item := range items {
-		if math.Abs(item.Y-minY) < yPositionTolerance {
-			headerTexts = append(headerTexts, strings.TrimSpace(item.Text))
-		}
+	for _, item := range visualLines(items)[0] {
+		headerTexts = append(headerTexts, strings.TrimSpace(item.Text))
 	}
 
 	// Check for known header patterns
@@ -711,21 +717,29 @@ func (c *CompactLines) detectReferenceTable(items []*models.TextItem, mostUsedDi
 	// This prevents date fragments (like "-", "2017", "04") from being detected as separate columns
 	columns := []float64{refX, secondColX}
 
-	// Find all items in this Y range
-	var tableItems []*models.TextItem
+	// The table is the rows that hold the reference IDs, with all the lines
+	// of their descriptions
+	var below []*models.TextItem
 	for _, item := range items {
-		if strings.TrimSpace(item.Text) == "" {
-			continue
-		}
-		if item.Y >= minY-float64(mostUsedDistance)*2 && item.Y <= maxY+float64(mostUsedDistance) {
-			tableItems = append(tableItems, item)
+		if strings.TrimSpace(item.Text) != "" && item.Y >= minY-float64(mostUsedDistance)*2 {
+			below = append(below, item)
 		}
 	}
-
-	// Update minY to include any items above the first reference but in the same row
-	for _, item := range tableItems {
-		if item.Y < minY {
-			minY = item.Y
+	isRef := make(map[*models.TextItem]bool, len(refItems))
+	for _, item := range refItems {
+		isRef[item] = true
+	}
+	for _, row := range c.tableRows(below, columns, nil) {
+		hasRef := false
+		for _, item := range row {
+			hasRef = hasRef || isRef[item]
+		}
+		if !hasRef {
+			continue
+		}
+		for _, item := range row {
+			minY = math.Min(minY, item.Y)
+			maxY = math.Max(maxY, item.Y)
 		}
 	}
 
@@ -739,27 +753,19 @@ func (c *CompactLines) detectReferenceTable(items []*models.TextItem, mostUsedDi
 // detectAlignedTables detects tables by looking for consistent column alignment across rows.
 //
 // This method catches simple tables without explicit headers or reference IDs by:
-//  1. Grouping items into rows by Y position
-//  2. Finding rows with 2+ distinct column positions (well-spaced items)
-//  3. Looking for sequences of 3+ rows that share consistent column positions
-//  4. Verifying significant column width (not just two items on a line)
+//  1. Splitting each visual line into runs of text separated by column gaps (see lineRuns)
+//  2. Finding lines with 2+ runs that start well apart (candidate rows)
+//  3. Looking for sequences of 3+ rows whose runs line up: each run starts, ends or is
+//     centred where the run of the same column in the next row does (left-, right- or
+//     centre-aligned columns)
+//  4. Requiring a whitespace corridor between neighbouring columns down the whole run
+//     (no cell's text reaches the start of the next column in any row)
 //  5. Validating that rows have a reasonable item-to-column ratio (to reject paragraph text)
 //
+// The line directly above the rows is their header when its runs line up with the columns.
 // Returns table regions for any detected aligned tables.
-func (c *CompactLines) detectAlignedTables(items []*models.TextItem, mostUsedDistance int, footerThreshold float64) []*tableRegion {
-	// Group items by Y position into rows
-	yThreshold := float64(mostUsedDistance) / 2.0
-	if yThreshold < 5 {
-		yThreshold = 5
-	}
-
-	type rowInfo struct {
-		y       float64
-		items   []*models.TextItem
-		columns []float64 // detected column X positions
-	}
-
-	yGroups := make(map[int][]*models.TextItem)
+func (c *CompactLines) detectAlignedTables(items []*models.TextItem, footerThreshold float64) []*tableRegion {
+	var content []*models.TextItem
 	for _, item := range items {
 		if strings.TrimSpace(item.Text) == "" {
 			continue
@@ -767,53 +773,39 @@ func (c *CompactLines) detectAlignedTables(items []*models.TextItem, mostUsedDis
 		if item.Y >= footerThreshold {
 			continue // Skip footer area
 		}
-		yBucket := int(item.Y / yThreshold)
-		yGroups[yBucket] = append(yGroups[yBucket], item)
+		content = append(content, item)
 	}
+	lines := visualLines(content)
 
-	// Convert to sorted rows
-	var rows []rowInfo
-	var buckets []int
-	for bucket := range yGroups {
-		buckets = append(buckets, bucket)
-	}
-	sort.Ints(buckets)
-
-	for _, bucket := range buckets {
-		rowItems := yGroups[bucket]
-		if len(rowItems) < 2 {
-			continue // Need at least 2 items to be a table row
-		}
-
-		// Sort by X
-		sort.Slice(rowItems, func(i, j int) bool {
-			return rowItems[i].X < rowItems[j].X
-		})
-
-		// Detect column positions for this row
-		var columns []float64
-		lastX := float64(-1000)
-		for _, item := range rowItems {
-			if item.X-lastX >= minColumnSpacing {
-				columns = append(columns, item.X)
-				lastX = item.X
+	// columnRuns returns the runs of a line that start columns
+	columnRuns := func(line []*models.TextItem) []textRun {
+		var runs []textRun
+		lastX := math.Inf(-1)
+		for _, r := range lineRuns(line) {
+			if len(r.items) == 1 && isRaisedMark(r.items[0], line) {
+				continue // a footnote mark does not start a column
+			}
+			if r.x-lastX >= minColumnSpacing {
+				runs = append(runs, r)
+				lastX = r.x
 			}
 		}
+		return runs
+	}
 
-		if len(columns) >= 2 {
-			rows = append(rows, rowInfo{
-				y:       float64(bucket) * yThreshold,
-				items:   rowItems,
-				columns: columns,
-			})
+	// Each visual line with two or more columns is a candidate row
+	var rows []alignedRow
+	for li, line := range lines {
+		if runs := columnRuns(line); len(runs) >= 2 {
+			rows = append(rows, alignedRow{line: li, items: line, runs: runs})
 		}
 	}
 
-	if len(rows) < 3 {
+	if len(rows) < minAlignedRows {
 		return nil // Need at least 3 rows to be a table
 	}
 
-	// Look for sequences of rows with matching column counts and aligned positions
+	// Look for sequences of rows with matching columns
 	var regions []*tableRegion
 	var layoutColumns [][]float64 // columns of runs rejected as 2-column page layout
 	startIdx := 0
@@ -821,77 +813,93 @@ func (c *CompactLines) detectAlignedTables(items []*models.TextItem, mostUsedDis
 	for startIdx < len(rows) {
 		// Find a run of consecutive rows with consistent columns
 		endIdx := startIdx + 1
-		baseColumns := rows[startIdx].columns
-
-		for endIdx < len(rows) {
-			nextColumns := rows[endIdx].columns
-			if !c.columnsMatch(baseColumns, nextColumns) {
-				break
-			}
+		for endIdx < len(rows) && runsAlign(rows[endIdx-1].runs, rows[endIdx].runs) &&
+			!crossedBetween(lines, rows[endIdx-1], rows[endIdx]) {
 			endIdx++
 		}
 
 		runLength := endIdx - startIdx
-		if runLength >= 3 {
-			// Validate: check if this looks like paragraph text being falsely detected as a table
-			// In real tables, items per row roughly matches column count
-			// In paragraph text, many items are crammed into few "columns"
-			totalItems := 0
+		if runLength < minAlignedRows {
+			startIdx = endIdx
+			continue
+		}
+
+		// Validate: check if this looks like paragraph text being falsely detected as a table
+		// In real tables, items per row roughly matches column count
+		// In paragraph text, many items are crammed into few "columns"
+		totalItems := 0
+		for i := startIdx; i < endIdx; i++ {
+			totalItems += len(rows[i].items)
+		}
+		numColumns := len(rows[startIdx].runs)
+		if float64(totalItems)/float64(runLength)/float64(numColumns) > 2.5 {
+			startIdx = endIdx
+			continue
+		}
+
+		// Columns: where each starts (its leftmost text) and the extent of its text
+		columns := make([]float64, numColumns)
+		extents := make([][2]float64, numColumns)
+		for k := range columns {
+			columns[k] = math.Inf(1)
+			extents[k] = [2]float64{math.Inf(1), math.Inf(-1)}
 			for i := startIdx; i < endIdx; i++ {
-				totalItems += len(rows[i].items)
+				r := rows[i].runs[k]
+				columns[k] = math.Min(columns[k], r.x)
+				extents[k] = [2]float64{math.Min(extents[k][0], r.x), math.Max(extents[k][1], r.end)}
 			}
-			avgItemsPerRow := float64(totalItems) / float64(runLength)
-			numColumns := len(rows[startIdx].columns)
+		}
 
-			// If average items per row is much higher than column count, it's likely paragraph text
-			// Real tables: ~1-2 items per column per row (maybe 3 for wrapped cells)
-			// Paragraphs: many items (words) squeezed into few "columns"
-			itemsToColumnsRatio := avgItemsPerRow / float64(numColumns)
-			if itemsToColumnsRatio > 2.5 {
-				// Too many items per column - this looks like paragraph text, not a table
-				startIdx = endIdx
-				continue
+		// A whitespace corridor must separate every two columns in every row
+		corridor := true
+		for k := 0; k+1 < numColumns; k++ {
+			if extents[k][1] >= extents[k+1][0] {
+				corridor = false
 			}
+		}
+		if !corridor {
+			startIdx = endIdx
+			continue
+		}
 
-			// Found a valid table sequence
-			// Merge column positions from all rows for best accuracy
-			var allColumns [][]float64
-			for i := startIdx; i < endIdx; i++ {
-				allColumns = append(allColumns, rows[i].columns)
-			}
-			mergedColumns := c.mergeColumnPositions(allColumns)
+		// Collect all items in this region for multi-column layout check
+		var regionItems []*models.TextItem
+		for i := startIdx; i < endIdx; i++ {
+			regionItems = append(regionItems, rows[i].items...)
+		}
 
-			// Collect all items in this region for multi-column layout check
-			var regionItems []*models.TextItem
-			for i := startIdx; i < endIdx; i++ {
-				regionItems = append(regionItems, rows[i].items...)
-			}
+		// Check for 2-column page layout being misdetected as table
+		if numColumns == 2 && c.looksLikeMultiColumnLayout(regionItems, columns) {
+			layoutColumns = append(layoutColumns, columns)
+			startIdx = endIdx
+			continue
+		}
 
-			// Check for 2-column page layout being misdetected as table
-			if len(mergedColumns) == 2 && c.looksLikeMultiColumnLayout(regionItems, mergedColumns) {
-				layoutColumns = append(layoutColumns, mergedColumns)
-				startIdx = endIdx
-				continue
-			}
-
-			// Calculate Y range
-			minY := rows[startIdx].y
-			maxY := rows[endIdx-1].y
-			for i := startIdx; i < endIdx; i++ {
-				for _, item := range rows[i].items {
-					if item.Y > maxY {
-						maxY = item.Y
-					}
+		// The line directly above is the header when its text lines up with
+		// the columns: each of its runs overlaps a column, none crosses one
+		minY := lineTop(rows[startIdx].items)
+		if above := rows[startIdx].line - 1; above >= 0 {
+			if header := lineRuns(lines[above]); len(header) >= 2 && runsFitColumns(header, columns, extents) {
+				minY = lineTop(lines[above])
+				for _, r := range header {
+					k := c.runColumn(r, columns, extents)
+					extents[k] = [2]float64{math.Min(extents[k][0], r.x), math.Max(extents[k][1], r.end)}
 				}
 			}
-
-			regions = append(regions, &tableRegion{
-				minY:      minY,
-				maxY:      maxY,
-				columns:   mergedColumns,
-				hasHeader: true, // Treat first row as header
-			})
 		}
+
+		maxY := minY
+		for _, item := range regionItems {
+			maxY = math.Max(maxY, item.Y)
+		}
+
+		regions = append(regions, &tableRegion{
+			minY:      minY,
+			maxY:      maxY,
+			columns:   columns,
+			extents:   extents,
+			hasHeader: true, // the header line, or else the first row
+		})
 
 		startIdx = endIdx
 	}
@@ -920,6 +928,76 @@ func (c *CompactLines) detectAlignedTables(items []*models.TextItem, mostUsedDis
 	return regions
 }
 
+// alignedRow is a line that may be a row of an aligned table
+type alignedRow struct {
+	line  int // index in the page's visual lines
+	items []*models.TextItem
+	runs  []textRun // the runs that start its columns
+}
+
+// crossedBetween reports whether running text lies between two rows: a line
+// between them whose text runs across the columns of the upper row. The
+// lines of wrapped cells keep to the columns; a paragraph between two
+// aligned lines (two numbered headings, say) ends the table.
+func crossedBetween(lines [][]*models.TextItem, upper, lower alignedRow) bool {
+	columns := make([]float64, len(upper.runs))
+	for k, r := range upper.runs {
+		columns[k] = r.x
+	}
+	for _, line := range lines[upper.line+1 : lower.line] {
+		for _, r := range lineRuns(line) {
+			if runCrosses(r, columns) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// runsAlign reports whether the runs of two rows line up column by column:
+// the same number of columns, and each pair starting, ending or centred at
+// the same place (left-, right- or centre-aligned columns)
+func runsAlign(a, b []textRun) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		left := math.Abs(a[k].x-b[k].x) <= 2*columnAlignmentTolerance
+		right := math.Abs(a[k].end-b[k].end) <= columnAlignmentTolerance
+		centre := math.Abs((a[k].x+a[k].end)/2-(b[k].x+b[k].end)/2) <= columnAlignmentTolerance
+		if !left && !right && !centre {
+			return false
+		}
+	}
+	return true
+}
+
+// runsFitColumns reports whether runs of text (a header line) each lie over
+// one column without crossing into another
+func runsFitColumns(runs []textRun, columns []float64, extents [][2]float64) bool {
+	used := make(map[int]bool)
+	for _, r := range runs {
+		if runCrosses(r, columns) {
+			return false
+		}
+		fits := false
+		for k, e := range extents {
+			if math.Min(r.end, e[1]) > math.Max(r.x, e[0]) || math.Abs(r.x-columns[k]) < columnAlignmentTolerance {
+				if used[k] {
+					return false
+				}
+				used[k] = true
+				fits = true
+				break
+			}
+		}
+		if !fits {
+			return false
+		}
+	}
+	return true
+}
+
 // columnsMatch checks if two sets of column positions are similar
 func (c *CompactLines) columnsMatch(cols1, cols2 []float64) bool {
 	if len(cols1) != len(cols2) {
@@ -936,266 +1014,122 @@ func (c *CompactLines) columnsMatch(cols1, cols2 []float64) bool {
 	return true
 }
 
-// mergeColumnPositions averages column positions from multiple column sets
-func (c *CompactLines) mergeColumnPositions(columnSets [][]float64) []float64 {
-	if len(columnSets) == 0 {
-		return nil
-	}
-
-	numCols := len(columnSets[0])
-	result := make([]float64, numCols)
-
-	for i := 0; i < numCols; i++ {
-		sum := 0.0
-		for _, cols := range columnSets {
-			if i < len(cols) {
-				sum += cols[i]
-			}
-		}
-		result[i] = sum / float64(len(columnSets))
-	}
-
-	return result
+// headerTable is a header line found by findTableHeader, with the extent of the table under it
+type headerTable struct {
+	y       float64      // Y of the top of the header line
+	columns []float64    // where each column starts
+	extents [][2]float64 // where each column's header text lies
+	maxY    float64      // Y of the lowest item in the table under the header
+	rows    int          // number of data rows under the header
 }
 
-// detectColumnsFromItems finds column X positions from a set of items
-func (c *CompactLines) detectColumnsFromItems(items []*models.TextItem) []float64 {
-	// Group items by X position (bucketed)
-	xCounts := make(map[int]int)
-
+// findTableHeader looks for a line that is a table header: 2-6 runs of short text, each
+// a column label, separated by column gaps (see lineRuns), with rows of data under them.
+// Of several candidates it prefers the one covering the most data rows (the true header
+// sits above the whole table, while artifact "headers" inside it only cover a locally
+// consistent sub-run), then more consistent columns, then the upper one. It returns nil if
+// there is none.
+func (c *CompactLines) findTableHeader(items []*models.TextItem) *headerTable {
+	var content []*models.TextItem
+	rightEdge := 0.0 // right text edge of the page, to identify the right-margin column
 	for _, item := range items {
-		if strings.TrimSpace(item.Text) == "" {
-			continue
+		if right := item.X + item.Width; right > rightEdge {
+			rightEdge = right
 		}
-		bucket := int(item.X / columnBucketSize)
-		xCounts[bucket]++
-	}
-
-	// Find X positions that have multiple items (potential columns)
-	var rawColumns []float64
-
-	var buckets []int
-	for bucket := range xCounts {
-		buckets = append(buckets, bucket)
-	}
-	sort.Ints(buckets)
-
-	for _, bucket := range buckets {
-		if xCounts[bucket] >= minColumnItemCount {
-			rawColumns = append(rawColumns, float64(bucket)*columnBucketSize)
+		if strings.TrimSpace(item.Text) != "" {
+			content = append(content, item)
 		}
 	}
+	lines := visualLines(content)
 
-	// Merge columns that are too close together (likely wrapped text, not separate columns)
-	// Real table columns should have significant horizontal spacing
-	var columns []float64
-
-	for i, col := range rawColumns {
-		if i == 0 {
-			columns = append(columns, col)
-		} else {
-			lastCol := columns[len(columns)-1]
-			if col-lastCol >= minColumnSpacing {
-				columns = append(columns, col)
-			}
-			// If gap is small, skip this column (it's part of the previous column's content)
-		}
-	}
-
-	return columns
-}
-
-// findTableHeader looks for a row that appears to be a table header
-// Returns the Y coordinate of the header, the column X positions and the Y of
-// the lowest item in the table under it
-func (c *CompactLines) findTableHeader(items []*models.TextItem, mostUsedDistance int) (float64, []float64, float64) {
-	// Group items by Y to find rows
-	yGroups := make(map[int][]*models.TextItem)
-	yThreshold := float64(mostUsedDistance) / 2.0
-	if yThreshold < 5 {
-		yThreshold = 5
-	}
-
-	for _, item := range items {
-		if strings.TrimSpace(item.Text) == "" {
-			continue
-		}
-		// Round Y to nearest threshold
-		yBucket := int(item.Y / yThreshold)
-		yGroups[yBucket] = append(yGroups[yBucket], item)
-	}
-
-	// Look for rows that look like headers:
-	// - 2-5 items on the same line
-	// - Items are single words (short text, no spaces typically)
-	// - Significant X spacing between items (>50 pixels)
-	// - Prefer rows with 3+ columns (more likely to be table headers)
-
-	type headerCandidate struct {
-		y       float64
-		columns []float64
-		maxY    float64 // Y of the lowest item in the table under this header
-		score   int     // Higher is better
-	}
-	var candidates []headerCandidate
-
-	// Visit rows from the top of the page down, so that of two candidates with
-	// the same score the upper one wins, whatever the map iteration order
-	yBuckets := make([]int, 0, len(yGroups))
-	for yBucket := range yGroups {
-		yBuckets = append(yBuckets, yBucket)
-	}
-	sort.Ints(yBuckets)
-
-	for _, yBucket := range yBuckets {
-		rowItems := yGroups[yBucket]
-		if len(rowItems) < 2 || len(rowItems) > 6 {
+	var best *headerTable
+	bestScore := 0
+	for li, line := range lines {
+		runs := lineRuns(line)
+		if len(runs) < 2 || len(runs) > 6 {
 			continue
 		}
 
-		// Sort by X
-		sort.Slice(rowItems, func(i, j int) bool {
-			return rowItems[i].X < rowItems[j].X
-		})
-
-		// Check if items are well-spaced (like column headers)
 		var columns []float64
-		lastX := float64(-1000)
-
-		for _, item := range rowItems {
-			text := strings.TrimSpace(item.Text)
-			// Header items should be relatively short (column labels)
-			if len(text) > maxHeaderItemLength || len(text) == 0 {
+		var extents [][2]float64
+		lastX := math.Inf(-1)
+		for _, r := range runs {
+			if len(r.items) == 1 && isRaisedMark(r.items[0], line) {
+				continue // a footnote mark does not start a column
+			}
+			// Header labels are short
+			if len(r.text()) > maxHeaderItemLength {
 				continue
 			}
-			// Check spacing from previous column
-			if item.X-lastX >= minColumnSpacing {
-				columns = append(columns, item.X)
-				lastX = item.X
+			if r.x-lastX >= minColumnSpacing {
+				columns = append(columns, r.x)
+				extents = append(extents, [2]float64{r.x, r.end})
+				lastX = r.x
 			}
 		}
+		if len(columns) < 2 {
+			continue
+		}
 
-		// Need at least 2 columns with good spacing
-		if len(columns) >= 2 {
-			headerY := float64(yBucket) * yThreshold
-			// Prefer the header whose columns are actually populated consistently by the
-			// rows beneath it, rather than the one with the most columns. Data rows split
-			// by artifacts (hyphens, reference numbers) can produce more, but less
-			// consistent, columns than the true header row.
-			maxY, dataRows, consistentCols, interiorCols := c.boundTableRegionByColumns(items, headerY, columns, mostUsedDistance)
-			// A known header is evidence enough with a single row beneath it: the last
-			// row of a table continued from the previous page.
-			minDataRows := minTableDataRows
-			if c.isKnownTableHeader(rowItems, columns) {
-				minDataRows = 1
-			}
-			if consistentCols >= 2 && interiorCols >= 1 && dataRows >= minDataRows {
-				// Score: prefer the header covering the most data rows (the true header sits
-				// above the whole table, while artifact "headers" inside it - e.g. rows split
-				// by hyphens - only cover a locally consistent sub-run), then more consistent
-				// columns, then earlier Y positions.
-				score := dataRows*100 + consistentCols*10 - int(headerY/10)
-				candidates = append(candidates, headerCandidate{headerY, columns, maxY, score})
+		headerY := lineTop(line)
+		var below []*models.TextItem
+		for _, l := range lines[li+1:] {
+			below = append(below, l...)
+		}
+		maxY, dataRows, consistentCols, interiorCols := c.boundTableRegionByColumns(below, headerY, columns, extents, rightEdge)
+		// A known header is evidence enough with a single row beneath it: the last
+		// row of a table continued from the previous page.
+		minDataRows := minTableDataRows
+		if c.isKnownTableHeader(line, columns) {
+			minDataRows = 1
+		}
+		if consistentCols >= 2 && interiorCols >= 1 && dataRows >= minDataRows {
+			score := dataRows*100 + consistentCols*10 - int(headerY/10)
+			if best == nil || score > bestScore {
+				best = &headerTable{headerY, columns, extents, maxY, dataRows}
+				bestScore = score
 			}
 		}
 	}
-
-	// Return the best candidate (highest score)
-	if len(candidates) > 0 {
-		best := candidates[0]
-		for _, c := range candidates[1:] {
-			if c.score > best.score {
-				best = c
-			}
-		}
-		return best.y, best.columns, best.maxY
-	}
-
-	return -1, nil, 0
+	return best
 }
 
 // detectMultiLineCells determines if a potential table has cells that span multiple lines.
 //
 // This is a key indicator of table structure: regular paragraphs have consistent line
 // spacing, while tables often have cells where text wraps to multiple lines within
-// a single logical row.
-//
-// Algorithm:
-//  1. Group items into visual rows using a threshold based on mostUsedDistance
-//  2. For each row, calculate the Y span (maxY - minY)
-//  3. If the span exceeds 0.8 * mostUsedDistance, check if multiple items align
-//     to the same column (indicating wrapped text within a cell)
-//  4. Return true if at least 2 rows have multi-line cells
+// a single logical row. The items are grouped into table rows (see tableRows); a row has a
+// multi-line cell when one of its columns holds text on two or more visual lines. It is a
+// table if at least 2 rows have one.
 //
 // This helps distinguish tables from regular text that happens to have column-like
 // alignment (e.g., lists with consistent indentation).
-func (c *CompactLines) detectMultiLineCells(items []*models.TextItem, columns []float64, mostUsedDistance int) bool {
-	// Group items by approximate row (using a larger threshold)
-	rowThreshold := float64(mostUsedDistance) * 2.5
-	if rowThreshold < minMultiLineCellThreshold {
-		rowThreshold = minMultiLineCellThreshold
-	}
-
-	// For each potential row, check if any column has items at multiple Y values
-	type rowGroup struct {
-		minY, maxY float64
-		items      []*models.TextItem
-	}
-
-	var rows []rowGroup
-
-	// Sort items by Y
-	sorted := make([]*models.TextItem, len(items))
-	copy(sorted, items)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Y < sorted[j].Y
-	})
-
-	for _, item := range sorted {
-		if strings.TrimSpace(item.Text) == "" {
-			continue
-		}
-
-		added := false
-		for i := range rows {
-			if item.Y >= rows[i].minY-rowThreshold && item.Y <= rows[i].maxY+rowThreshold {
-				rows[i].items = append(rows[i].items, item)
-				if item.Y < rows[i].minY {
-					rows[i].minY = item.Y
-				}
-				if item.Y > rows[i].maxY {
-					rows[i].maxY = item.Y
-				}
-				added = true
-				break
-			}
-		}
-		if !added {
-			rows = append(rows, rowGroup{
-				minY:  item.Y,
-				maxY:  item.Y,
-				items: []*models.TextItem{item},
-			})
+func (c *CompactLines) detectMultiLineCells(items []*models.TextItem, columns []float64, extents [][2]float64) bool {
+	var content []*models.TextItem
+	for _, item := range items {
+		if strings.TrimSpace(item.Text) != "" {
+			content = append(content, item)
 		}
 	}
+	lineOf := make(map[*models.TextItem]int, len(content))
+	for li, line := range visualLines(content) {
+		for _, item := range line {
+			lineOf[item] = li
+		}
+	}
+	colOf := c.columnsOf(content, columns, extents)
 
-	// Check if any row has items at significantly different Y values in the same column
 	multiLineCount := 0
-	for _, row := range rows {
-		ySpan := row.maxY - row.minY
-		if ySpan > float64(mostUsedDistance)*0.8 {
-			// This row spans multiple text lines - check if it's column-aligned
-			for _, col := range columns {
-				colItems := 0
-				for _, item := range row.items {
-					if math.Abs(item.X-col) < referenceColumnMinGap {
-						colItems++
-					}
-				}
-				if colItems >= 2 {
-					multiLineCount++
-					break
-				}
+	for _, row := range c.tableRows(content, columns, extents) {
+		firstLine := make(map[int]int)
+		for _, item := range row {
+			col := colOf[item]
+			first, seen := firstLine[col]
+			if !seen {
+				firstLine[col] = lineOf[item]
+			} else if lineOf[item] != first {
+				multiLineCount++
+				break
 			}
 		}
 	}
@@ -1214,36 +1148,24 @@ func (c *CompactLines) detectMultiLineCells(items []*models.TextItem, columns []
 // Additionally, we check for multi-column page layouts where items in the "second column"
 // are actually continuations of text from the first column (indicated by lowercase starts
 // or word fragments).
-func (c *CompactLines) validateTableStructure(items []*models.TextItem, columns []float64, mostUsedDistance int) bool {
+func (c *CompactLines) validateTableStructure(items []*models.TextItem, columns []float64) bool {
 	if len(items) == 0 || len(columns) < 2 {
 		return false
 	}
 
-	// Group items by Y position into rows
-	yThreshold := float64(mostUsedDistance) / 2.0
-	if yThreshold < 5 {
-		yThreshold = 5
-	}
-
-	yGroups := make(map[int]int) // bucket -> item count
+	var content []*models.TextItem
 	for _, item := range items {
-		if strings.TrimSpace(item.Text) == "" {
-			continue
+		if strings.TrimSpace(item.Text) != "" {
+			content = append(content, item)
 		}
-		yBucket := int(item.Y / yThreshold)
-		yGroups[yBucket]++
 	}
-
-	if len(yGroups) == 0 {
+	lines := visualLines(content)
+	if len(lines) == 0 {
 		return false
 	}
 
-	// Calculate average items per row
-	totalItems := 0
-	for _, count := range yGroups {
-		totalItems += count
-	}
-	avgItemsPerRow := float64(totalItems) / float64(len(yGroups))
+	// Calculate average items per line
+	avgItemsPerRow := float64(len(content)) / float64(len(lines))
 
 	// Calculate items-to-columns ratio
 	// Real tables: ~1-2 items per column per row (maybe 3 for wrapped cells)
@@ -1341,8 +1263,15 @@ func (c *CompactLines) detectAndSplitMultiColumnLayout(items []*models.TextItem)
 		return nil, nil, false // Page too narrow for multi-column
 	}
 
-	// Check if items cluster into two distinct X regions
-	midPoint := minX + pageWidth/2
+	// Check if items cluster into two distinct X regions either side of a
+	// gutter: the position in the middle third of the text area (from the
+	// left edge of the text to where it ends on the right) that the least
+	// text runs across, nearest the centre on a tie
+	rightEdge := maxX
+	for _, item := range items {
+		rightEdge = math.Max(rightEdge, item.X+item.Width)
+	}
+	midPoint := findGutter(items, minX, rightEdge)
 	leftCount, rightCount := 0, 0
 	var leftItems, rightItems []*models.TextItem
 
@@ -1367,37 +1296,49 @@ func (c *CompactLines) detectAndSplitMultiColumnLayout(items []*models.TextItem)
 		return nil, nil, false
 	}
 
-	// Check for centered text: if many items at the same Y span across the midpoint,
-	// it's likely centered text (like title pages), not a 2-column layout.
-	// Group items by Y and check if any Y group has items on both sides of midpoint.
-	yGroups := make(map[int]struct{ left, right int }) // key = Y * 10 (rounded)
-	for _, item := range items {
-		key := int(item.Y * 10)
-		g := yGroups[key]
-		if item.X < midPoint {
-			g.left++
-			// Text that starts left of the midpoint and runs past it spans
-			// both sides by itself
-			if item.X+item.Width > midPoint {
-				g.right++
-			}
-		} else {
-			g.right++
-		}
-		yGroups[key] = g
-	}
-
-	// Count Y groups that span both sides (indicating centered/spanning lines)
+	// Check for centered or full-width text: a line whose text runs across the
+	// midpoint spans both sides (like title pages), which a 2-column layout's
+	// lines do not: its columns are separated by a gutter. A line runs across
+	// when one item crosses the midpoint, or the text on either side of it is
+	// no further apart than a word space.
+	lines := visualLines(items)
 	spanningLineCount := 0
-	for _, g := range yGroups {
-		if g.left > 0 && g.right > 0 {
+	ownRightCount := 0 // right-side text on lines that do not span
+	for _, line := range lines {
+		spans := false
+		var leftEnd, rightStart float64 = math.Inf(-1), math.Inf(1)
+		var height float64
+		for _, item := range line {
+			height = math.Max(height, textHeight(item))
+			if item.X < midPoint {
+				if item.X+item.Width > midPoint {
+					spans = true
+				}
+				leftEnd = math.Max(leftEnd, item.X+item.Width)
+			} else {
+				rightStart = math.Min(rightStart, item.X)
+			}
+		}
+		if spans || rightStart-leftEnd < multiColumnMinGutter*height {
 			spanningLineCount++
+			continue
+		}
+		for _, item := range line {
+			if item.X >= midPoint && strings.TrimSpace(item.Text) != "" {
+				ownRightCount++
+			}
 		}
 	}
 
-	// If more than 30% of Y groups span both sides, it's not a true 2-column layout
-	if len(yGroups) > 0 {
-		spanningRatio := float64(spanningLineCount) / float64(len(yGroups))
+	// The right column needs lines of its own, not only the ends of lines
+	// that run across from the left
+	if ownRightCount < 5 {
+		return nil, nil, false
+	}
+
+	// If more than 30% of lines span both sides, it's not a true 2-column layout
+	if len(lines) > 0 {
+		spanningRatio := float64(spanningLineCount) / float64(len(lines))
 		if spanningRatio > 0.3 {
 			return nil, nil, false // Too many lines span both columns - probably centered text
 		}
@@ -1428,228 +1369,34 @@ func (c *CompactLines) detectAndSplitMultiColumnLayout(items []*models.TextItem)
 	return leftItems, rightItems, true
 }
 
+// findGutter returns the X between left and right, within the middle third,
+// that the fewest text items run across, nearest the centre on a tie
+func findGutter(items []*models.TextItem, left, right float64) float64 {
+	centre := (left + right) / 2
+	best, bestCount := centre, -1
+	third := (right - left) / 6
+	for x := math.Ceil(centre - third); x <= centre+third; x++ {
+		count := 0
+		for _, item := range items {
+			if strings.TrimSpace(item.Text) != "" && item.X <= x && x <= item.X+item.Width {
+				count++
+			}
+		}
+		if bestCount < 0 || count < bestCount || (count == bestCount && math.Abs(x-centre) < math.Abs(best-centre)) {
+			best, bestCount = x, count
+		}
+	}
+	return best
+}
+
 // findTableRegion returns the table region containing the given Y coordinate
 func (c *CompactLines) findTableRegion(y float64, regions []*tableRegion) *tableRegion {
 	for _, region := range regions {
-		if y >= region.minY-tableRegionTolerance && y <= region.maxY+tableRegionTolerance {
+		if y >= region.minY && y <= region.maxY {
 			return region
 		}
 	}
 	return nil
-}
-
-// groupTextItemsByLine groups TextItems by Y coordinate (standard algorithm)
-func (c *CompactLines) groupTextItemsByLine(items []*models.TextItem, mostUsedDistance int) [][]*models.TextItem {
-	if len(items) == 0 {
-		return nil
-	}
-
-	// Sort by Y
-	sorted := make([]*models.TextItem, len(items))
-	copy(sorted, items)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Y < sorted[j].Y
-	})
-
-	var lines [][]*models.TextItem
-	var currentLine []*models.TextItem
-
-	threshold := float64(mostUsedDistance) / 2.0
-
-	for _, item := range sorted {
-		if len(currentLine) > 0 && math.Abs(currentLine[0].Y-item.Y) >= threshold {
-			lines = append(lines, currentLine)
-			currentLine = nil
-		}
-		currentLine = append(currentLine, item)
-	}
-
-	if len(currentLine) > 0 {
-		lines = append(lines, currentLine)
-	}
-
-	// Sort items within each line by X coordinate
-	for _, line := range lines {
-		sort.Slice(line, func(i, j int) bool {
-			return line[i].X < line[j].X
-		})
-	}
-
-	return lines
-}
-
-// detectColumns finds consistent X positions that indicate table columns
-func (c *CompactLines) detectColumns(items []*models.TextItem) []float64 {
-	// Count how many items start at each X position (bucketed)
-	xCounts := make(map[int]int)
-
-	for _, item := range items {
-		bucket := int(item.X / columnBucketSize)
-		xCounts[bucket]++
-	}
-
-	// Find X positions that have multiple items (potential columns)
-	var columns []float64
-
-	// Get buckets sorted by X
-	var buckets []int
-	for bucket := range xCounts {
-		buckets = append(buckets, bucket)
-	}
-	sort.Ints(buckets)
-
-	for _, bucket := range buckets {
-		if xCounts[bucket] >= minColumnItemCount {
-			columns = append(columns, float64(bucket)*columnBucketSize)
-		}
-	}
-
-	return columns
-}
-
-// visualRow represents a visual table row with Y boundaries and items
-type visualRow struct {
-	minY, maxY float64
-	items      []*models.TextItem
-}
-
-// addItemToRow adds an item to a visual row and updates Y boundaries
-func (row *visualRow) addItemToRow(item *models.TextItem) {
-	row.items = append(row.items, item)
-	if item.Y < row.minY {
-		row.minY = item.Y
-	}
-	if item.Y > row.maxY {
-		row.maxY = item.Y
-	}
-}
-
-// isInYRange checks if an item's Y position is within the row's threshold range
-func (row *visualRow) isInYRange(itemY, threshold float64) bool {
-	return itemY >= row.minY-threshold && itemY <= row.maxY+threshold
-}
-
-// checkColumnOverlap determines if item's column exists in the row and if other columns exist
-func (c *CompactLines) checkColumnOverlap(item *models.TextItem, row *visualRow, columns []float64) (sameColExists, diffColExists bool) {
-	itemCol := c.getColumn(item.X, columns)
-	for _, existing := range row.items {
-		if c.getColumn(existing.X, columns) == itemCol {
-			sameColExists = true
-		} else {
-			diffColExists = true
-		}
-	}
-	return
-}
-
-// tryAddItemToRow attempts to add an item to an existing row based on Y proximity and column overlap.
-// Returns true if item was added, false if it should start a new row.
-func (c *CompactLines) tryAddItemToRow(item *models.TextItem, row *visualRow, columns []float64, rowThreshold float64) bool {
-	if !row.isInYRange(item.Y, rowThreshold) {
-		return false
-	}
-
-	sameColExists, diffColExists := c.checkColumnOverlap(item, row, columns)
-
-	// Same column - this is likely a multi-line cell, be more permissive
-	if sameColExists {
-		row.addItemToRow(item)
-		return true
-	}
-
-	// Different column - check if Y span is in a reasonable range
-	if diffColExists {
-		ySpan := row.maxY - row.minY
-		if ySpan < rowThreshold*1.2 {
-			row.addItemToRow(item)
-			return true
-		}
-	}
-
-	return false
-}
-
-// sortRowItems sorts items within a row by column, then Y, then X
-func (c *CompactLines) sortRowItems(items []*models.TextItem, columns []float64) {
-	sort.Slice(items, func(i, j int) bool {
-		colI := c.getColumn(items[i].X, columns)
-		colJ := c.getColumn(items[j].X, columns)
-		if colI != colJ {
-			return colI < colJ
-		}
-		// Within same column, sort by Y first
-		if math.Abs(items[i].Y-items[j].Y) > yTolerance {
-			return items[i].Y < items[j].Y
-		}
-		// Within same Y, sort by X
-		return items[i].X < items[j].X
-	})
-}
-
-// groupAsTable groups items as table rows, combining items in the same visual row.
-//
-// Algorithm:
-//  1. Sort items by Y position
-//  2. For each item, try to add it to an existing row based on Y proximity
-//  3. Items in the same column can span wider Y ranges (multi-line cells)
-//  4. Items in different columns must be in a tighter Y range (same visual row)
-//  5. Sort items within each row by column, then Y, then X
-//
-// The rowThreshold determines how far apart items can be and still be considered
-// part of the same row. It's based on mostUsedDistance (typical line spacing).
-func (c *CompactLines) groupAsTable(items []*models.TextItem, columns []float64, mostUsedDistance int) [][]*models.TextItem {
-	// Sort items by Y first
-	sorted := make([]*models.TextItem, len(items))
-	copy(sorted, items)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Y < sorted[j].Y
-	})
-
-	// Calculate row threshold for grouping
-	rowThreshold := float64(mostUsedDistance) * 2.5
-	if rowThreshold < minRowThreshold {
-		rowThreshold = minRowThreshold
-	}
-
-	var rows []visualRow
-
-	for _, item := range sorted {
-		added := false
-		for i := range rows {
-			if c.tryAddItemToRow(item, &rows[i], columns, rowThreshold) {
-				added = true
-				break
-			}
-		}
-
-		if !added {
-			rows = append(rows, visualRow{
-				minY:  item.Y,
-				maxY:  item.Y,
-				items: []*models.TextItem{item},
-			})
-		}
-	}
-
-	// Convert to result format with sorted items
-	result := make([][]*models.TextItem, len(rows))
-	for i, row := range rows {
-		c.sortRowItems(row.items, columns)
-		result[i] = row.items
-	}
-
-	return result
-}
-
-// sharesColumn checks if an item shares a column with any items in the list
-func (c *CompactLines) sharesColumn(item *models.TextItem, items []*models.TextItem, columns []float64) bool {
-	itemCol := c.getColumn(item.X, columns)
-	for _, other := range items {
-		if c.getColumn(other.X, columns) == itemCol {
-			return true
-		}
-	}
-	return false
 }
 
 // getColumn returns which column index an X position belongs to
@@ -1673,39 +1420,6 @@ func (c *CompactLines) getColumn(x float64, columns []float64) int {
 	}
 
 	return bestCol
-}
-
-func (c *CompactLines) groupByLine(items []interface{}, mostUsedDistance int) [][]*models.TextItem {
-	var lines [][]*models.TextItem
-	var currentLine []*models.TextItem
-
-	threshold := float64(mostUsedDistance) / 2.0
-
-	for _, item := range items {
-		textItem, ok := item.(*models.TextItem)
-		if !ok {
-			continue
-		}
-
-		if len(currentLine) > 0 && math.Abs(currentLine[0].Y-textItem.Y) >= threshold {
-			lines = append(lines, currentLine)
-			currentLine = nil
-		}
-		currentLine = append(currentLine, textItem)
-	}
-
-	if len(currentLine) > 0 {
-		lines = append(lines, currentLine)
-	}
-
-	// Sort items within each line by X coordinate
-	for _, line := range lines {
-		sort.Slice(line, func(i, j int) bool {
-			return line[i].X < line[j].X
-		})
-	}
-
-	return lines
 }
 
 func (c *CompactLines) compactLine(textItems []*models.TextItem, fontToFormats map[string]*models.WordFormat) *models.LineItem {
@@ -1843,9 +1557,8 @@ func (c *CompactLines) combineTextWithContext(items []*models.TextItem, avgFontS
 
 		if !endsWithSpace && !strings.HasPrefix(textToAdd, " ") {
 			if lastItem != nil {
-				// Check if we're on a different Y line (cell wrap in table)
-				yDistance := math.Abs(item.Y - lastItem.Y)
-				if yDistance > yLineWrapThreshold {
+				// Check if we're on a different line (cell wrap in table)
+				if !onSameLine(lastItem, item) {
 					// Different line - add a space unless the word continues
 					if c.lineWrapNeedsSpace(lastItem.Text, textToAdd) {
 						text.WriteString(" ")

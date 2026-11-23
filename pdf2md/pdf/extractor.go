@@ -16,16 +16,19 @@ import (
 )
 
 // TextItem represents an extracted text element with position. X and Y are
-// where the text starts on the page (Y grows downward); Width is how far the
-// text advances along its baseline, in the same page units, so the text ends
-// at X+Width.
+// where the text starts on the page (Y grows downward, Y is the baseline);
+// Width is how far the text advances along its baseline, in the same page
+// units. For upright text the baseline is horizontal and the text ends at
+// X+Width; Rotated marks text whose baseline is not (a diagonal watermark,
+// a vertical label).
 type TextItem struct {
-	X      float64
-	Y      float64
-	Width  float64
-	Height float64
-	Text   string
-	Font   string
+	X       float64
+	Y       float64
+	Width   float64
+	Height  float64
+	Text    string
+	Font    string
+	Rotated bool
 
 	// glyphRun marks text that began as a glyph fragment, which following
 	// fragments may be joined onto (see mergeGlyphRuns)
@@ -187,11 +190,11 @@ func (e *TextExtractor) parseFont(dict map[string]interface{}) *Font {
 		font.Encoding = strings.TrimPrefix(encoding, "/")
 	}
 
-	if firstChar, ok := dict["FirstChar"].(float64); ok {
+	if firstChar, ok := e.resolveNumber(dict["FirstChar"]); ok {
 		font.FirstChar = int(firstChar)
 	}
 
-	if lastChar, ok := dict["LastChar"].(float64); ok {
+	if lastChar, ok := e.resolveNumber(dict["LastChar"]); ok {
 		font.LastChar = int(lastChar)
 	}
 
@@ -456,6 +459,7 @@ type GraphicsState struct {
 	Leading      float64
 	TextRise     float64
 	HorizScaling float64
+	LineWidth    float64 // stroke width in user space (w)
 }
 
 // parseContentStream parses a content stream and extracts text items
@@ -473,6 +477,7 @@ func (e *TextExtractor) parseContentStream(content []byte, mediaBox [4]float64) 
 		TextMatrix:   [6]float64{1, 0, 0, 1, 0, 0},
 		LineMatrix:   [6]float64{1, 0, 0, 1, 0, 0},
 		HorizScaling: 100,
+		LineWidth:    1,
 	}
 
 	var gsStack []*GraphicsState
@@ -503,13 +508,13 @@ func (e *TextExtractor) parseFormXObject(content []byte, mediaBox [4]float64, pa
 		}
 	}()
 
-	// Initialize graphics state, inheriting CTM from parent
-	gs := &GraphicsState{
-		CTM:          parentGS.CTM,
-		TextMatrix:   [6]float64{1, 0, 0, 1, 0, 0},
-		LineMatrix:   [6]float64{1, 0, 0, 1, 0, 0},
-		HorizScaling: 100,
-	}
+	// The form inherits the whole graphics state, text state included
+	// (font, size, Tc, Tw, Tz, TL, Ts); the text matrices belong to a text
+	// object, which a form cannot continue
+	inherited := *parentGS
+	gs := &inherited
+	gs.TextMatrix = [6]float64{1, 0, 0, 1, 0, 0}
+	gs.LineMatrix = [6]float64{1, 0, 0, 1, 0, 0}
 
 	var gsStack []*GraphicsState
 
@@ -681,6 +686,11 @@ func (e *TextExtractor) isOperator(token string) bool {
 	return operators[token]
 }
 
+// delimiter is an array or dictionary delimiter in a content stream, kept
+// apart from strings: a literal string "(])" is a string, not the end of an
+// array
+type delimiter string
+
 func (e *TextExtractor) parseToken(token string) interface{} {
 	if strings.HasPrefix(token, "/") {
 		return token
@@ -697,7 +707,7 @@ func (e *TextExtractor) parseToken(token string) interface{} {
 	}
 
 	if token == "[" || token == "]" || token == "<<" || token == ">>" {
-		return token
+		return delimiter(token)
 	}
 
 	// Try to parse as number
@@ -829,6 +839,12 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 			gs.FontSize = e.getFloat(operands[1])
 		}
 
+	case "w":
+		// Line width
+		if v, ok := e.lastFloats(operands, 1); ok {
+			gs.LineWidth = v[0]
+		}
+
 	case "Tc":
 		// Character spacing
 		if len(operands) >= 1 {
@@ -901,10 +917,7 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 		// Show text
 		if len(operands) >= 1 {
 			if text, ok := operands[0].(string); ok {
-				item := e.showText(text, gs, mediaBox)
-				if item.Text != "" {
-					items = append(items, item)
-				}
+				items = append(items, e.showText(text, gs, mediaBox)...)
 			}
 		}
 
@@ -918,10 +931,7 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 		gs.LineMatrix = gs.TextMatrix
 		if len(operands) >= 1 {
 			if text, ok := operands[0].(string); ok {
-				item := e.showText(text, gs, mediaBox)
-				if item.Text != "" {
-					items = append(items, item)
-				}
+				items = append(items, e.showText(text, gs, mediaBox)...)
 			}
 		}
 
@@ -933,10 +943,7 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 			gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, 0, -gs.Leading}, gs.LineMatrix)
 			gs.LineMatrix = gs.TextMatrix
 			if text, ok := operands[2].(string); ok {
-				item := e.showText(text, gs, mediaBox)
-				if item.Text != "" {
-					items = append(items, item)
-				}
+				items = append(items, e.showText(text, gs, mediaBox)...)
 			}
 		}
 
@@ -976,12 +983,18 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 						// The form's Matrix maps form space into the user
 						// space in which the form is drawn
 						formGS := *gs
-						if m := e.resolveArray(formObj.Dict["Matrix"]); len(m) >= 6 {
+						if m := e.resolveArray(formObj.Dict["Matrix"]); len(m) == 6 {
 							var matrix [6]float64
+							valid := true
 							for i := range matrix {
-								matrix[i], _ = e.resolveNumber(m[i])
+								var ok bool
+								matrix[i], ok = e.resolveNumber(m[i])
+								valid = valid && ok
 							}
-							formGS.CTM = e.multiplyMatrix(matrix, gs.CTM)
+							// A malformed Matrix is the identity
+							if valid {
+								formGS.CTM = e.multiplyMatrix(matrix, gs.CTM)
+							}
 						}
 
 						// Parse Form XObject content with current graphics state
@@ -1024,7 +1037,41 @@ func (e *TextExtractor) multiplyMatrix(a, b [6]float64) [6]float64 {
 	}
 }
 
-func (e *TextExtractor) showText(text string, gs *GraphicsState, mediaBox [4]float64) TextItem {
+func (e *TextExtractor) showText(text string, gs *GraphicsState, mediaBox [4]float64) []TextItem {
+	// A space wider than tjColumnGap ems (set wide with word spacing)
+	// separates columns, as a wide move in a TJ array does: the text on
+	// either side becomes a separate item
+	var items []TextItem
+	for _, part := range e.splitAtWideSpaces(text, gs) {
+		if item := e.showTextPart(part, gs, mediaBox); item.Text != "" {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+// splitAtWideSpaces splits the codes of a string after each single-byte
+// space whose advance is wider than tjColumnGap ems
+func (e *TextExtractor) splitAtWideSpaces(text string, gs *GraphicsState) []string {
+	if font, ok := e.fonts[gs.FontName]; (ok && font.twoByte) || gs.FontSize == 0 {
+		return []string{text}
+	}
+	if e.textAdvance(" ", gs) <= tjColumnGap*math.Abs(gs.FontSize) {
+		return []string{text}
+	}
+	var parts []string
+	start := 0
+	for i := 0; i+1 < len(text); i++ {
+		if text[i] == ' ' {
+			parts = append(parts, text[start:i+1])
+			start = i + 1
+		}
+	}
+	return append(parts, text[start:])
+}
+
+// showTextPart shows text as one item and advances the text position
+func (e *TextExtractor) showTextPart(text string, gs *GraphicsState, mediaBox [4]float64) TextItem {
 	// Decode text using font encoding
 	decodedText := e.decodeText(text, gs.FontName)
 
@@ -1048,19 +1095,30 @@ func (e *TextExtractor) showText(text string, gs *GraphicsState, mediaBox [4]flo
 	gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, advance, 0}, gs.TextMatrix)
 
 	return TextItem{
-		X:      x,
-		Y:      y,
-		Width:  advance * scale,
-		Height: fontSize,
-		Text:   decodedText,
-		Font:   gs.FontName,
+		X:       x,
+		Y:       y,
+		Width:   advance * scale,
+		Height:  fontSize,
+		Text:    decodedText,
+		Font:    gs.FontName,
+		Rotated: !upright(tm),
 	}
+}
+
+// upright reports whether text drawn with a text rendering matrix runs left
+// to right along a horizontal baseline
+func upright(tm [6]float64) bool {
+	return tm[0] > 0 && math.Abs(tm[1]) <= uprightTolerance*tm[0] && math.Abs(tm[2]) <= uprightTolerance*math.Abs(tm[3])
 }
 
 const (
 	// tjColumnGap is the widest move, in ems, inside a TJ array that is
 	// still a space within a line of text; a wider one separates columns
 	tjColumnGap = 2.0
+
+	// uprightTolerance is how far the text matrix may shear or rotate the
+	// baseline, as a share of its scale, for text still to count as upright
+	uprightTolerance = 0.01
 
 	// glyphRunMaxRunes is the longest text that is treated as a glyph
 	// fragment and joined onto the text before it
@@ -1168,13 +1226,13 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 	// Look for array content
 	inArray := false
 	for _, op := range operands {
-		if str, ok := op.(string); ok {
-			if str == "[" {
+		if d, ok := op.(delimiter); ok {
+			if d == "[" {
 				inArray = true
 				textArray = []interface{}{}
 				continue
 			}
-			if str == "]" {
+			if d == "]" {
 				inArray = false
 				continue
 			}
@@ -1217,12 +1275,13 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 		y = pageHeight - y
 
 		items = append(items, TextItem{
-			X:      x,
-			Y:      y,
-			Width:  (textEnd - textStart) * scale,
-			Height: fontSize,
-			Text:   currentText.String(),
-			Font:   gs.FontName,
+			X:       x,
+			Y:       y,
+			Width:   (textEnd - textStart) * scale,
+			Height:  fontSize,
+			Text:    currentText.String(),
+			Font:    gs.FontName,
+			Rotated: !upright(tm),
 		})
 		currentText.Reset()
 		shown = false
@@ -1231,16 +1290,22 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 	for _, elem := range textArray {
 		switch v := elem.(type) {
 		case string:
-			if v != "[" && v != "]" {
-				currentText.WriteString(e.decodeText(v, gs.FontName))
-				if !shown && v != "" {
+			// A space set wider than tjColumnGap ems ends an item, as
+			// in a Tj string
+			parts := e.splitAtWideSpaces(v, gs)
+			for k, part := range parts {
+				currentText.WriteString(e.decodeText(part, gs.FontName))
+				if !shown && part != "" {
 					textStart = pos
 					shown = true
 				}
-				advance := e.textAdvance(v, gs)
+				advance := e.textAdvance(part, gs)
 				pos += advance
 				textEnd = pos
 				gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, advance, 0}, gs.TextMatrix)
+				if k < len(parts)-1 {
+					emit()
+				}
 			}
 		case float64:
 			// Negative value moves text right, positive moves left
@@ -1272,8 +1337,13 @@ func (e *TextExtractor) decodeText(text string, fontName string) string {
 		return e.basicDecode(text, "")
 	}
 
-	// Use CMap if available
+	// Use CMap if available. A Type0 font's codes are 2 bytes whatever
+	// codespace its ToUnicode CMap declares (some declare 1-byte codes too,
+	// which would split every code in two)
 	if font.ToUnicode != nil {
+		if font.twoByte {
+			return font.ToUnicode.decodeTwoByte([]byte(text))
+		}
 		return font.ToUnicode.DecodeString([]byte(text))
 	}
 

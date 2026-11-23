@@ -105,14 +105,14 @@ func TestRuledTable_MergedCells(t *testing.T) {
 	xs := []float64{100, 200, 300}
 	ys := []float64{100, 120, 140, 160}
 	rules := []models.Rule{
-		// Outer box and all row rules; the column rule is missing in the
-		// top row (a title spanning both columns)
+		// All row rules and the outer box; the column rule is missing in the
+		// middle row (a cell spanning both columns)
 		hRule(100, 100, 300), hRule(120, 100, 300), hRule(140, 100, 300), hRule(160, 100, 300),
-		vRule(100, 100, 160), vRule(300, 100, 160), vRule(200, 120, 160),
+		vRule(100, 100, 160), vRule(300, 100, 160), vRule(200, 100, 120), vRule(200, 140, 160),
 	}
 	items := []*models.TextItem{
-		cellItem(150, ys[0], "Title"),
-		cellItem(xs[0], ys[1], "a1"), cellItem(xs[1], ys[1], "b1"),
+		cellItem(xs[0], ys[0], "a1"), cellItem(xs[1], ys[0], "b1"),
+		cellItem(xs[0], ys[1], "Wide"),
 		cellItem(xs[0], ys[2], "a2"), cellItem(xs[1], ys[2], "b2"),
 	}
 
@@ -120,7 +120,7 @@ func TestRuledTable_MergedCells(t *testing.T) {
 	if len(tables) != 1 {
 		t.Fatalf("got %d tables, want 1", len(tables))
 	}
-	want := [][]string{{"Title", ""}, {"a1", "b1"}, {"a2", "b2"}}
+	want := [][]string{{"a1", "b1"}, {"Wide", ""}, {"a2", "b2"}}
 	if got := tableCells(tables[0]); !reflect.DeepEqual(got, want) {
 		t.Errorf("cells = %q, want %q", got, want)
 	}
@@ -131,6 +131,35 @@ func TestRuledTable_MergedCells(t *testing.T) {
 	}
 	if !tables[0].rows[0].isHeader || tables[0].rows[1].isHeader {
 		t.Errorf("only the first row should be the header")
+	}
+}
+
+// A first row that is one cell across the whole table is a title: it stays
+// text above the table, and the next row is the header
+func TestRuledTable_TitleRow(t *testing.T) {
+	ys := []float64{100, 120, 140, 160}
+	rules := []models.Rule{
+		hRule(100, 100, 300), hRule(120, 100, 300), hRule(140, 100, 300), hRule(160, 100, 300),
+		vRule(100, 100, 160), vRule(300, 100, 160), vRule(200, 120, 160),
+	}
+	items := []*models.TextItem{
+		cellItem(150, ys[0], "Title"),
+		cellItem(100, ys[1], "Name"), cellItem(200, ys[1], "Value"),
+		cellItem(100, ys[2], "a"), cellItem(200, ys[2], "b"),
+	}
+	tables, inTable := NewCompactLines().detectRuledTables(items, rules)
+	if len(tables) != 1 {
+		t.Fatalf("got %d tables, want 1", len(tables))
+	}
+	want := [][]string{{"Name", "Value"}, {"a", "b"}}
+	if got := tableCells(tables[0]); !reflect.DeepEqual(got, want) {
+		t.Errorf("cells = %q, want %q", got, want)
+	}
+	if inTable[0] {
+		t.Errorf("the title was taken by the table")
+	}
+	if tables[0].minY != 120 {
+		t.Errorf("table top = %v, want 120, below the title", tables[0].minY)
 	}
 }
 
@@ -258,4 +287,119 @@ func tableCells(t *ruledTable) [][]string {
 		cells = append(cells, row.cells)
 	}
 	return cells
+}
+
+// Rotated text over a ruled table (a diagonal watermark) stays out of its
+// cells and is emitted as it would be without the table
+func TestRuledTable_RotatedTextNotInCells(t *testing.T) {
+	rules := gridRules([]float64{100, 200, 300}, []float64{100, 120, 140})
+	items := []*models.TextItem{
+		cellItem(100, 100, "Name"), cellItem(200, 100, "Value"),
+		cellItem(100, 120, "a"), cellItem(200, 120, "b"),
+		{X: 150, Y: 118, Width: 80, Height: 10, Text: "Watermark", Rotated: true},
+	}
+	tables, inTable := NewCompactLines().detectRuledTables(items, rules)
+	if len(tables) != 1 {
+		t.Fatalf("got %d tables, want 1", len(tables))
+	}
+	want := [][]string{{"Name", "Value"}, {"a", "b"}}
+	if got := tableCells(tables[0]); !reflect.DeepEqual(got, want) {
+		t.Errorf("cells = %q, want %q", got, want)
+	}
+	if inTable[4] {
+		t.Errorf("the rotated item was taken by the table")
+	}
+}
+
+// Two tables drawn one above the other share the rule between them; where
+// the columns change they are two tables, each with its own header
+func TestFindRuledGrids_StackedTables(t *testing.T) {
+	rules := []models.Rule{
+		hRule(0, 0, 200), hRule(20, 0, 200), hRule(40, 0, 200), hRule(60, 0, 200), hRule(80, 0, 200),
+		vRule(0, 0, 80), vRule(200, 0, 80),
+		vRule(100, 0, 40), // table A's column rule
+		vRule(50, 40, 80), // table B's column rule
+	}
+	grids := findRuledGrids(rules)
+	if len(grids) != 2 {
+		t.Fatalf("got %d grids, want 2", len(grids))
+	}
+	if !reflect.DeepEqual(grids[0].xs, []float64{0, 100, 200}) || !reflect.DeepEqual(grids[0].ys, []float64{0, 20, 40}) {
+		t.Errorf("first grid xs %v ys %v", grids[0].xs, grids[0].ys)
+	}
+	if !reflect.DeepEqual(grids[1].xs, []float64{0, 50, 200}) || !reflect.DeepEqual(grids[1].ys, []float64{40, 60, 80}) {
+		t.Errorf("second grid xs %v ys %v", grids[1].xs, grids[1].ys)
+	}
+}
+
+// A page frame with a rule under the page header and a divider between two
+// columns of running text is page layout, not a table
+func TestRuledTable_PageFrameIsNotATable(t *testing.T) {
+	rules := []models.Rule{
+		hRule(20, 20, 580), hRule(80, 20, 580), hRule(760, 20, 580),
+		vRule(20, 20, 760), vRule(580, 20, 760), vRule(300, 80, 760),
+	}
+	items := []*models.TextItem{{X: 40, Y: 50, Width: 200, Height: 12, Text: "Page header"}}
+	for i := 0; i < 40; i++ {
+		y := 100 + 15*float64(i)
+		items = append(items,
+			&models.TextItem{X: 40, Y: y, Width: 240, Height: 10, Text: "left column running text"},
+			&models.TextItem{X: 320, Y: y, Width: 240, Height: 10, Text: "right column running text"})
+	}
+	if tables, _ := NewCompactLines().detectRuledTables(items, rules); len(tables) != 0 {
+		t.Errorf("got %d tables, want none", len(tables))
+	}
+
+	// The same frame with short paragraphs: one row of two cells under a
+	// header that spans the page is not a table either
+	short := []*models.TextItem{
+		{X: 40, Y: 50, Width: 200, Height: 12, Text: "Page header"},
+		{X: 40, Y: 100, Width: 240, Height: 10, Text: "A short left paragraph"},
+		{X: 320, Y: 100, Width: 240, Height: 10, Text: "A short right paragraph"},
+	}
+	if tables, _ := NewCompactLines().detectRuledTables(short, rules); len(tables) != 0 {
+		t.Errorf("got %d tables for short paragraphs, want none", len(tables))
+	}
+}
+
+// A page with more rules than a table page has is a drawing: ruled table
+// detection is not attempted
+func TestFindRuledGrids_TooManyRules(t *testing.T) {
+	var rules []models.Rule
+	for i := 0; i <= maxRulesPerPage/2; i++ {
+		rules = append(rules, hRule(float64(i), 0, 500), vRule(float64(i)/4, 0, 600))
+	}
+	if grids := findRuledGrids(rules); grids != nil {
+		t.Errorf("got %d grids, want none", len(grids))
+	}
+}
+
+// Centred lines of a merged title cell start at different columns one below
+// the other; that is not a table body laid out in columns
+func TestRuledTable_CentredTextInMergedCell(t *testing.T) {
+	rules := []models.Rule{
+		hRule(100, 100, 400), hRule(140, 100, 400), hRule(160, 100, 400), hRule(180, 100, 400),
+		vRule(100, 100, 180), vRule(400, 100, 180), vRule(250, 140, 180),
+		// a column rule in the merged cell's row would make it two cells,
+		// so there is none; the cell spans both columns
+	}
+	items := []*models.TextItem{
+		// centred two-line text: the first line starts left of the column
+		// boundary at 250, the second right of it
+		{X: 180, Y: 114, Width: 140, Height: 10, Text: "A centred cell title"},
+		{X: 255, Y: 128, Width: 40, Height: 10, Text: "line two"},
+		cellItem(100, 140, "Name"), cellItem(250, 140, "Value"),
+		cellItem(100, 160, "a"), cellItem(250, 160, "b"),
+	}
+	tables, inTable := NewCompactLines().detectRuledTables(items, rules)
+	if len(tables) != 1 {
+		t.Fatalf("got %d tables, want 1", len(tables))
+	}
+	want := [][]string{{"Name", "Value"}, {"a", "b"}}
+	if got := tableCells(tables[0]); !reflect.DeepEqual(got, want) {
+		t.Errorf("cells = %q, want %q", got, want)
+	}
+	if inTable[0] || inTable[1] {
+		t.Errorf("the centred title was taken by the table")
+	}
 }

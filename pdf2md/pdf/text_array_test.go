@@ -26,7 +26,7 @@ func TestShowTextArray_FontSizeIncludesTextMatrix(t *testing.T) {
 		}
 	}
 
-	array := e.showTextArray([]interface{}{"[", "Hello", "]"}, newState(), nil, mediaBox)
+	array := e.showTextArray([]interface{}{delimiter("["), "Hello", delimiter("]")}, newState(), nil, mediaBox)
 	if len(array) != 1 {
 		t.Fatalf("got %d items, want 1", len(array))
 	}
@@ -34,7 +34,7 @@ func TestShowTextArray_FontSizeIncludesTextMatrix(t *testing.T) {
 		t.Errorf("TJ height = %v, want 12", array[0].Height)
 	}
 
-	single := e.showText("Hello", newState(), mediaBox)
+	single := e.showText("Hello", newState(), mediaBox)[0]
 	if math.Abs(single.Height-array[0].Height) > 0.001 {
 		t.Errorf("Tj height = %v, TJ height = %v, want the same", single.Height, array[0].Height)
 	}
@@ -58,5 +58,15 @@ func TestShowTextArray_ColumnGapSplitsItems(t *testing.T) {
 	words := oneItem(t, extractWith(t, fonts, "BT /F1 10 Tf 100 700 Td [(A) -1000 (B)] TJ ET"))
 	if words.Text != "A B" {
 		t.Errorf("text = %q, want \"A B\"", words.Text)
+	}
+}
+
+// A literal string holding a bracket is a glyph to show, not the end of the
+// TJ array: the text after it is not lost
+func TestShowTextArray_BracketInString(t *testing.T) {
+	fonts := map[string]map[string]interface{}{"F1": testFont()}
+	item := oneItem(t, extractWith(t, fonts, "BT /F1 10 Tf 100 700 Td [(A) -10 (]) -10 ([) (B)] TJ ET"))
+	if item.Text != "A][B" {
+		t.Errorf("text = %q, want \"A][B\"", item.Text)
 	}
 }

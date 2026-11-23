@@ -55,7 +55,7 @@ func (e *TextExtractor) loadWidths(font *Font, dict map[string]interface{}) {
 	// Without a Widths array (the standard 14 fonts may omit it), use the
 	// built-in metrics of the font or of the family it resembles
 	if len(font.Widths) == 0 {
-		font.std = standardWidths(font.BaseFont)
+		font.std = standardWidths(font.BaseFont, e.encodingName(dict))
 	}
 }
 
@@ -118,35 +118,66 @@ func (e *TextExtractor) loadCIDWidths(font *Font, dict map[string]interface{}) {
 }
 
 // standardWidths returns the built-in widths for a font by its base font
-// name: the standard 14 text fonts exactly, and for any other font the
-// metrics of the family it resembles (Arial and other sans fonts Helvetica,
-// serif fonts Times, monospaced fonts Courier)
-func standardWidths(baseFont string) *[224]uint16 {
+// name and encoding: the standard 14 fonts exactly, and for any other font
+// the metrics of the family it resembles (Arial and other sans fonts
+// Helvetica, serif fonts Times, monospaced fonts Courier). The tables are by
+// character code, so they follow the encoding: WinAnsiEncoding (and, for its
+// ASCII range, MacRomanEncoding) or the font's built-in encoding, which is
+// StandardEncoding for the text fonts. Symbol and ZapfDingbats have only
+// their own.
+func standardWidths(baseFont, encoding string) *[224]uint16 {
 	name := strings.ToLower(baseFont)
 	if i := strings.IndexByte(name, '+'); i >= 0 {
 		name = name[i+1:]
+	}
+	switch {
+	case strings.Contains(name, "symbol"):
+		return &symbolBuiltin
+	case strings.Contains(name, "dingbats"):
+		return &zapfDingbatsBuiltin
+	}
+
+	winAnsi := encoding == "WinAnsiEncoding" || encoding == "MacRomanEncoding"
+	pick := func(byWinAnsi, byBuiltin *[224]uint16) *[224]uint16 {
+		if winAnsi {
+			return byWinAnsi
+		}
+		return byBuiltin
 	}
 	bold := strings.Contains(name, "bold")
 	italic := strings.Contains(name, "italic") || strings.Contains(name, "oblique")
 
 	switch {
 	case strings.Contains(name, "courier") || strings.Contains(name, "mono"):
-		return &courier
+		return pick(&courier, &courierBuiltin)
 	case strings.Contains(name, "times") || strings.Contains(name, "roman") ||
 		(strings.Contains(name, "serif") && !strings.Contains(name, "sans")):
 		switch {
 		case bold && italic:
-			return &timesBoldItalic
+			return pick(&timesBoldItalic, &timesBoldItalicBuiltin)
 		case bold:
-			return &timesBold
+			return pick(&timesBold, &timesBoldBuiltin)
 		case italic:
-			return &timesItalic
+			return pick(&timesItalic, &timesItalicBuiltin)
 		}
-		return &timesRoman
+		return pick(&timesRoman, &timesRomanBuiltin)
 	case bold:
-		return &helveticaBold
+		return pick(&helveticaBold, &helveticaBoldBuiltin)
 	}
-	return &helvetica
+	return pick(&helvetica, &helveticaBuiltin)
+}
+
+// encodingName returns the name of a simple font's encoding: the /Encoding
+// name, or the /BaseEncoding of an encoding dictionary; "" for the font's
+// built-in encoding
+func (e *TextExtractor) encodingName(dict map[string]interface{}) string {
+	if name := nameValue(dict["Encoding"]); name != "" {
+		return strings.TrimPrefix(name, "/")
+	}
+	if enc := e.resolveDict(dict["Encoding"]); enc != nil {
+		return strings.TrimPrefix(nameValue(enc["BaseEncoding"]), "/")
+	}
+	return ""
 }
 
 // glyphWidth returns the width of the glyph for a character code in text
@@ -156,7 +187,9 @@ func (f *Font) glyphWidth(code int) float64 {
 		return w * f.widthScale
 	}
 	if f.std != nil && code >= 32 && code-32 < len(f.std) && f.std[code-32] != 0 {
-		return float64(f.std[code-32]) * f.widthScale
+		// Built-in widths are in thousandths of an em whatever the font's
+		// matrix
+		return float64(f.std[code-32]) / 1000
 	}
 	return f.missingWidth * f.widthScale
 }
@@ -182,7 +215,9 @@ func (e *TextExtractor) textAdvance(text string, gs *GraphicsState) float64 {
 			code = code<<8 | int(text[i+j])
 		}
 		advance += font.glyphWidth(code)*gs.FontSize + gs.CharSpacing
-		if n == 1 && code == ' ' {
+		// Word spacing applies to the single-byte code 32, never to a byte
+		// of a 2-byte font, even an odd byte left at the end
+		if !font.twoByte && code == ' ' {
 			advance += gs.WordSpacing
 		}
 	}

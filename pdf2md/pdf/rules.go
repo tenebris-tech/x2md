@@ -19,6 +19,10 @@ const (
 	// line rather than as an area
 	ruleMaxThickness = 1.5
 
+	// ruleMaxStroke is the widest stroke, in page units, that draws a rule;
+	// table borders are 0.25 to 2 units, a wider stroke paints a bar
+	ruleMaxStroke = 3.0
+
 	// ruleMergeGap is the largest gap between two collinear rules that are
 	// joined into one (a border drawn cell by cell leaves small gaps)
 	ruleMergeGap = 1.0
@@ -55,7 +59,8 @@ type pathBuilder struct {
 	subpaths []subpath
 }
 
-// pathPoint maps a user space point to page coordinates
+// pagePoint maps a user space point to page coordinates (CTM applied, Y
+// flipped to grow downward like the Y of text items)
 func (e *TextExtractor) pagePoint(x, y float64, gs *GraphicsState, mediaBox [4]float64) pathPoint {
 	ctm := gs.CTM
 	px := x*ctm[0] + y*ctm[2] + ctm[4]
@@ -107,10 +112,17 @@ func (e *TextExtractor) pathOperator(op string, operands []interface{}, gs *Grap
 		}
 		end := e.pagePoint(v[n-2], v[n-1], gs, mediaBox)
 		sp := current()
-		if sp == nil || sp.closed {
+		if sp == nil {
 			// A segment with no current point starts a new subpath
 			p.subpaths = append(p.subpaths, subpath{points: []pathPoint{end}, straight: []bool{false}})
 			return true
+		}
+		if sp.closed {
+			// After h the current point is the start of the closed subpath,
+			// after re the rectangle's corner (x, y): a new subpath starts
+			// there
+			p.subpaths = append(p.subpaths, subpath{points: []pathPoint{sp.points[0]}, straight: []bool{false}})
+			sp = current()
 		}
 		sp.points = append(sp.points, end)
 		sp.straight = append(sp.straight, op == "l")
@@ -133,14 +145,14 @@ func (e *TextExtractor) pathOperator(op string, operands []interface{}, gs *Grap
 			})
 		}
 	case "S", "s":
-		e.strokePath(op == "s")
+		e.strokePath(op == "s", gs)
 		p.subpaths = nil
 	case "f", "F", "f*":
 		e.fillPath()
 		p.subpaths = nil
 	case "B", "B*", "b", "b*":
 		close := op == "b" || op == "b*"
-		e.strokePath(close)
+		e.strokePath(close, gs)
 		e.fillPath()
 		p.subpaths = nil
 	case "n":
@@ -156,7 +168,12 @@ func (e *TextExtractor) pathOperator(op string, operands []interface{}, gs *Grap
 
 // strokePath records the straight horizontal and vertical segments of the
 // current path as rules
-func (e *TextExtractor) strokePath(closeAll bool) {
+func (e *TextExtractor) strokePath(closeAll bool, gs *GraphicsState) {
+	// A stroke wider than ruleMaxStroke on the page paints a bar, not a rule
+	scale := math.Sqrt(math.Abs(gs.CTM[0]*gs.CTM[3] - gs.CTM[1]*gs.CTM[2]))
+	if gs.LineWidth*scale > ruleMaxStroke {
+		return
+	}
 	for _, sp := range e.path.subpaths {
 		for i := 1; i < len(sp.points); i++ {
 			if sp.straight[i] {

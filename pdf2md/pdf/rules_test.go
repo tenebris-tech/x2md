@@ -110,6 +110,35 @@ func TestRules(t *testing.T) {
 			want:    []Rule{{X1: 100, Y1: 100, X2: 300, Y2: 100}},
 		},
 		{
+			// After h the current point is the start of the subpath
+			name:    "line from the current point after h",
+			content: "100 692 m 300 692 l 300 592 l h 100 592 l S",
+			want: []Rule{
+				{X1: 100, Y1: 100, X2: 300, Y2: 100},
+				{X1: 100, Y1: 100, X2: 100, Y2: 200},
+				{X1: 300, Y1: 100, X2: 300, Y2: 200},
+			},
+		},
+		{
+			// After re the current point is the rectangle's corner (x, y)
+			name:    "line from the current point after re",
+			content: "100 692 200 0 re 100 592 l S",
+			want: []Rule{
+				{X1: 100, Y1: 100, X2: 300, Y2: 100},
+				{X1: 100, Y1: 100, X2: 100, Y2: 200},
+			},
+		},
+		{
+			name:    "wide stroke is a bar, not a rule",
+			content: "10 w 100 692 m 300 692 l S",
+			want:    nil,
+		},
+		{
+			name:    "stroke width scaled by the CTM",
+			content: "2 0 0 2 0 0 cm 2 w 50 346 m 150 346 l S",
+			want:    nil,
+		},
+		{
 			// Operators the parser did not know (scn) must not leave their
 			// operands in front of the next operator's
 			name:    "unknown operator operands do not leak",

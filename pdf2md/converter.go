@@ -400,12 +400,13 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 		var items []interface{}
 		for _, ti := range textItems {
 			items = append(items, &models.TextItem{
-				X:      ti.X,
-				Y:      ti.Y,
-				Width:  ti.Width,
-				Height: ti.Height,
-				Text:   ti.Text,
-				Font:   ti.Font,
+				X:       ti.X,
+				Y:       ti.Y,
+				Width:   ti.Width,
+				Height:  ti.Height,
+				Text:    ti.Text,
+				Font:    ti.Font,
+				Rotated: ti.Rotated,
 			})
 		}
 

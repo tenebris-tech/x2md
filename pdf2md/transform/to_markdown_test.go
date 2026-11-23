@@ -143,3 +143,28 @@ func TestTableHeader_RepeatedOnlyRemovedOnContinuation(t *testing.T) {
 		t.Errorf("both tables should keep their header, got:\n%s", got)
 	}
 }
+
+// Two tables on one page, separated only by a blank line, stay two tables:
+// the second keeps its header
+func TestTables_SamePageNotMerged(t *testing.T) {
+	got := runToMarkdown(false,
+		textPage(0, "| A | B |\n| --- | --- |\n| 1 | 2 |", "| C | D |\n| --- | --- |\n| 3 | 4 |"),
+	)
+	want := "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n| C | D |\n| --- | --- |\n| 3 | 4 |\n\n"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A table on the next page with a different number of columns is a new
+// table, not a continuation
+func TestTables_DifferentColumnsAcrossPagesNotMerged(t *testing.T) {
+	got := runToMarkdown(false,
+		textPage(0, "| A | B |\n| --- | --- |\n| 1 | 2 |"),
+		textPage(1, "| C | D | E |\n| --- | --- | --- |\n| 3 | 4 | 5 |"),
+	)
+	want := "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n| C | D | E |\n| --- | --- | --- |\n| 3 | 4 | 5 |\n\n"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}

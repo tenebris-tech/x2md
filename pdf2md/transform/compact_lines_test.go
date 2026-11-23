@@ -206,7 +206,7 @@ func TestExtractColumnTexts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := c.extractColumnTexts(tt.items, tt.columns)
+			got := c.extractColumnTexts(tt.items, tt.columns, nil)
 			if len(got) != len(tt.want) {
 				t.Errorf("extractColumnTexts() returned %d columns, want %d", len(got), len(tt.want))
 				return
@@ -245,59 +245,6 @@ func TestGetColumn(t *testing.T) {
 			got := c.getColumn(tt.x, columns)
 			if got != tt.want {
 				t.Errorf("getColumn(%.1f) = %d, want %d", tt.x, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestVisualRowAddItem(t *testing.T) {
-	row := &visualRow{
-		minY:  100,
-		maxY:  100,
-		items: []*models.TextItem{{X: 50, Y: 100, Text: "first"}},
-	}
-
-	// Add item below
-	row.addItemToRow(&models.TextItem{X: 50, Y: 115, Text: "second"})
-	if row.maxY != 115 {
-		t.Errorf("maxY = %.1f, want 115", row.maxY)
-	}
-
-	// Add item above
-	row.addItemToRow(&models.TextItem{X: 50, Y: 90, Text: "third"})
-	if row.minY != 90 {
-		t.Errorf("minY = %.1f, want 90", row.minY)
-	}
-
-	if len(row.items) != 3 {
-		t.Errorf("items count = %d, want 3", len(row.items))
-	}
-}
-
-func TestVisualRowIsInYRange(t *testing.T) {
-	row := &visualRow{minY: 100, maxY: 120}
-
-	tests := []struct {
-		name      string
-		itemY     float64
-		threshold float64
-		want      bool
-	}{
-		{"within range", 110, 10, true},
-		{"at min boundary", 100, 10, true},
-		{"at max boundary", 120, 10, true},
-		{"just below threshold", 89, 10, false},
-		{"just above threshold", 131, 10, false},
-		{"within threshold below min", 95, 10, true},
-		{"within threshold above max", 125, 10, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := row.isInYRange(tt.itemY, tt.threshold)
-			if got != tt.want {
-				t.Errorf("isInYRange(%.1f, %.1f) = %v, want %v",
-					tt.itemY, tt.threshold, got, tt.want)
 			}
 		})
 	}
@@ -529,7 +476,7 @@ func TestDetectAlignedTables(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			regions := c.detectAlignedTables(tt.items, 12, 700.0)
+			regions := c.detectAlignedTables(tt.items, 700.0)
 
 			if len(regions) != tt.wantRegions {
 				t.Errorf("detectAlignedTables() got %d regions, want %d", len(regions), tt.wantRegions)
@@ -590,25 +537,15 @@ func TestColumnsMatch(t *testing.T) {
 	}
 }
 
-func TestMergeColumnPositions(t *testing.T) {
-	c := NewCompactLines()
-
-	columnSets := [][]float64{
-		{50.0, 150.0, 250.0},
-		{52.0, 148.0, 252.0},
-		{48.0, 152.0, 248.0},
+// itemsBelow returns the items below a header line at headerY
+func itemsBelow(items []*models.TextItem, headerY float64) []*models.TextItem {
+	var below []*models.TextItem
+	for _, item := range items {
+		if item.Y > headerY {
+			below = append(below, item)
+		}
 	}
-
-	result := c.mergeColumnPositions(columnSets)
-
-	if len(result) != 3 {
-		t.Errorf("mergeColumnPositions() got %d columns, want 3", len(result))
-	}
-
-	// Average of 50, 52, 48 = 50
-	if result[0] != 50.0 {
-		t.Errorf("mergeColumnPositions()[0] = %f, want 50.0", result[0])
-	}
+	return below
 }
 
 // tableItem builds a text item for the table detection tests
@@ -636,7 +573,7 @@ func TestBoundTableRegionKeepsWrappedCells(t *testing.T) {
 		)
 	}
 
-	maxY, dataRows, consistentCols, interiorCols := c.boundTableRegionByColumns(items, 100, columns, 16)
+	maxY, dataRows, consistentCols, interiorCols := c.boundTableRegionByColumns(itemsBelow(items, 100), 100, columns, nil, 540)
 
 	if dataRows != 3 {
 		t.Errorf("dataRows = %d, want 3", dataRows)
@@ -664,7 +601,7 @@ func TestBoundTableRegionStopsAtProse(t *testing.T) {
 		items = append(items, tableItem(80, 200+float64(i)*16, "A paragraph of text below the table."))
 	}
 
-	maxY, dataRows, _, _ := c.boundTableRegionByColumns(items, 100, columns, 16)
+	maxY, dataRows, _, _ := c.boundTableRegionByColumns(itemsBelow(items, 100), 100, columns, nil, 540)
 
 	if dataRows != 3 {
 		t.Errorf("dataRows = %d, want 3", dataRows)
@@ -694,7 +631,7 @@ func TestDetectAlignedTablesRejectsPageColumns(t *testing.T) {
 		items = append(items, tableItem(56, y, "Left column text"), tableItem(297, y, "To be or not to be"))
 	}
 
-	if regions := c.detectAlignedTables(items, 15, 700); len(regions) != 0 {
+	if regions := c.detectAlignedTables(items, 700); len(regions) != 0 {
 		t.Errorf("detected %d table region(s) on a 2-column page, want none", len(regions))
 	}
 }
@@ -709,7 +646,7 @@ func TestDetectAlignedTablesKeepsTable(t *testing.T) {
 		items = append(items, tableItem(56, y, "Setting"), tableItem(297, y, "Enabled"))
 	}
 
-	if regions := c.detectAlignedTables(items, 15, 700); len(regions) != 1 {
+	if regions := c.detectAlignedTables(items, 700); len(regions) != 1 {
 		t.Errorf("detected %d table region(s), want 1", len(regions))
 	}
 }
@@ -729,13 +666,13 @@ func TestBoundTableRegionStopsAtIndentedText(t *testing.T) {
 		items = append(items, tableItem(215, 200+float64(i)*16, "An indented block of text below the table."))
 	}
 
-	maxY, dataRows, _, _ := c.boundTableRegionByColumns(items, 100, columns, 16)
+	maxY, dataRows, _, _ := c.boundTableRegionByColumns(itemsBelow(items, 100), 100, columns, nil, 540)
 
 	if dataRows != 3 {
 		t.Errorf("dataRows = %d, want 3", dataRows)
 	}
-	if maxY > 200+16*float64(maxWrappedCellRows) {
-		t.Errorf("maxY = %.0f, want the region to end within %d lines of the table", maxY, maxWrappedCellRows)
+	if maxY >= 200 {
+		t.Errorf("maxY = %.0f, want the region to end above the indented text at 200", maxY)
 	}
 }
 
@@ -776,15 +713,15 @@ func TestDetectTableRegionsUnknownHeaderWithOneRow(t *testing.T) {
 // are single-column lines, even when the only item that starts in the right
 // half is a dot leader or other text that looks like a sentence fragment
 func TestDetectAndSplitMultiColumnLayout_TextAcrossMiddle(t *testing.T) {
-	// 20 lines starting at X 60; the first 6 also have a dot leader that
-	// starts at X 400, so the page's middle is at X 230
-	page := func(leftWidth float64) []*models.TextItem {
+	// 20 lines starting at X 60; the first 6 also have a dot leader up to
+	// X 550, starting at leaderX
+	page := func(leftWidth, leaderX float64) []*models.TextItem {
 		var items []*models.TextItem
 		for i := 0; i < 20; i++ {
 			y := 100 + 20*float64(i)
 			items = append(items, &models.TextItem{X: 60, Y: y, Width: leftWidth, Height: 10, Text: "Entry"})
 			if i < 6 {
-				items = append(items, &models.TextItem{X: 400, Y: y, Width: 150, Height: 10, Text: ".....5"})
+				items = append(items, &models.TextItem{X: leaderX, Y: y, Width: 550 - leaderX, Height: 10, Text: ".....5"})
 			}
 		}
 		return items
@@ -793,16 +730,18 @@ func TestDetectAndSplitMultiColumnLayout_TextAcrossMiddle(t *testing.T) {
 	tests := []struct {
 		name      string
 		leftWidth float64
+		leaderX   float64
 		want      bool
 	}{
-		{"left text crosses the middle", 300, false},
-		{"left text ends before the middle", 150, true},
+		// A contents page: each leader runs on from the end of its entry
+		{"left text runs into the leaders", 300, 362, false},
+		{"left text ends before the middle", 150, 400, true},
 	}
 
 	c := NewCompactLines()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, got := c.detectAndSplitMultiColumnLayout(page(tt.leftWidth))
+			_, _, got := c.detectAndSplitMultiColumnLayout(page(tt.leftWidth, tt.leaderX))
 			if got != tt.want {
 				t.Errorf("multi-column = %v, want %v", got, tt.want)
 			}

@@ -18,6 +18,7 @@ type TextItem struct {
 	Height         float64
 	Text           string
 	Font           string
+	Rotated        bool // baseline not horizontal (see pdf.TextItem)
 	LineFormat     *WordFormat
 	UnopenedFormat *WordFormat
 	UnclosedFormat *WordFormat
