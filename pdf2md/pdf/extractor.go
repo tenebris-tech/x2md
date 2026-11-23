@@ -68,6 +68,11 @@ type TextExtractor struct {
 	// font names are its own: two forms may both call a different font "F1".
 	xobjectFonts map[string]map[string]*Font
 	pageIndex    int
+
+	// path is the path under construction; rules collects the lines the
+	// current page paints (see Rules)
+	path  pathBuilder
+	rules []Rule
 }
 
 // NewTextExtractor creates a new text extractor
@@ -82,6 +87,8 @@ func NewTextExtractor(parser *Parser) *TextExtractor {
 // ExtractPage extracts text items from a page
 func (e *TextExtractor) ExtractPage(pageIndex int) ([]TextItem, error) {
 	e.pageIndex = pageIndex
+	e.path = pathBuilder{}
+	e.rules = nil
 
 	page, err := e.parser.GetPage(pageIndex)
 	if err != nil {
@@ -667,6 +674,8 @@ func (e *TextExtractor) isOperator(token string) bool {
 		"B": true, "B*": true, "b": true, "b*": true, "n": true,
 		"W": true, "W*": true, "d": true, "i": true, "j": true, "J": true,
 		"M": true, "w": true, "ri": true, "sh": true,
+		"SCN": true, "scn": true, "Tr": true, "d0": true, "d1": true,
+		"BX": true, "EX": true, "MP": true, "DP": true,
 	}
 
 	return operators[token]
@@ -983,6 +992,9 @@ func (e *TextExtractor) executeOperator(op string, operands []interface{}, gs *G
 				}
 			}
 		}
+
+	default:
+		e.pathOperator(op, operands, gs, mediaBox)
 	}
 
 	return items
@@ -1046,6 +1058,10 @@ func (e *TextExtractor) showText(text string, gs *GraphicsState, mediaBox [4]flo
 }
 
 const (
+	// tjColumnGap is the widest move, in ems, inside a TJ array that is
+	// still a space within a line of text; a wider one separates columns
+	tjColumnGap = 2.0
+
 	// glyphRunMaxRunes is the longest text that is treated as a glyph
 	// fragment and joined onto the text before it
 	glyphRunMaxRunes = 3
@@ -1174,46 +1190,19 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 	}
 
 	// Process array elements. pos is the text position in text space relative
-	// to where the array starts; the item runs from the first glyph shown to
-	// the end of the last, without leading or trailing adjustments.
+	// to where the array starts; an item runs from the first glyph shown to
+	// the end of the last, without leading or trailing adjustments. A move
+	// wider than tjColumnGap ems is a gap between columns, not a word space:
+	// the text on either side becomes a separate item.
 	var currentText strings.Builder
 	startTM := gs.TextMatrix
 	var pos, textStart, textEnd float64
 	shown := false
 
-	for _, elem := range textArray {
-		switch v := elem.(type) {
-		case string:
-			if v != "[" && v != "]" {
-				currentText.WriteString(e.decodeText(v, gs.FontName))
-				if !shown && v != "" {
-					textStart = pos
-					shown = true
-				}
-				advance := e.textAdvance(v, gs)
-				pos += advance
-				textEnd = pos
-				gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, advance, 0}, gs.TextMatrix)
-			}
-		case float64:
-			// Negative value moves text right, positive moves left
-			adjustment := -v / 1000.0 * gs.FontSize * (gs.HorizScaling / 100.0)
-			pos += adjustment
-
-			// If significant adjustment (space), emit current text
-			// Normal word spacing is ~250-333/1000 em (0.25-0.33 em)
-			// Use 300 as threshold to avoid false word breaks from kerning
-			// Kerning adjustments are typically -50 to -150 units
-			if math.Abs(v) > 300 && currentText.Len() > 0 {
-				// Add space
-				currentText.WriteString(" ")
-			}
-
-			gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, adjustment, 0}, gs.TextMatrix)
+	emit := func() {
+		if currentText.Len() == 0 {
+			return
 		}
-	}
-
-	if currentText.Len() > 0 {
 		// Text space to page: the size on the page comes from the text
 		// matrix as well as the CTM, as many producers set a font size of 1
 		// and scale with Tm
@@ -1235,7 +1224,43 @@ func (e *TextExtractor) showTextArray(operands []interface{}, gs *GraphicsState,
 			Text:   currentText.String(),
 			Font:   gs.FontName,
 		})
+		currentText.Reset()
+		shown = false
 	}
+
+	for _, elem := range textArray {
+		switch v := elem.(type) {
+		case string:
+			if v != "[" && v != "]" {
+				currentText.WriteString(e.decodeText(v, gs.FontName))
+				if !shown && v != "" {
+					textStart = pos
+					shown = true
+				}
+				advance := e.textAdvance(v, gs)
+				pos += advance
+				textEnd = pos
+				gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, advance, 0}, gs.TextMatrix)
+			}
+		case float64:
+			// Negative value moves text right, positive moves left
+			adjustment := -v / 1000.0 * gs.FontSize * (gs.HorizScaling / 100.0)
+			pos += adjustment
+
+			if -v > tjColumnGap*1000 {
+				emit()
+			} else if math.Abs(v) > 300 && currentText.Len() > 0 {
+				// If significant adjustment (space), emit current text
+				// Normal word spacing is ~250-333/1000 em (0.25-0.33 em)
+				// Use 300 as threshold to avoid false word breaks from kerning
+				// Kerning adjustments are typically -50 to -150 units
+				currentText.WriteString(" ")
+			}
+
+			gs.TextMatrix = e.multiplyMatrix([6]float64{1, 0, 0, 1, adjustment, 0}, gs.TextMatrix)
+		}
+	}
+	emit()
 
 	return items
 }

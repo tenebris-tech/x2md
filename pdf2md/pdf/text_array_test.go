@@ -39,3 +39,24 @@ func TestShowTextArray_FontSizeIncludesTextMatrix(t *testing.T) {
 		t.Errorf("Tj height = %v, TJ height = %v, want the same", single.Height, array[0].Height)
 	}
 }
+
+// A move of more than two ems inside a TJ array separates columns: the text
+// on either side becomes a separate item. Smaller moves are word spaces.
+func TestShowTextArray_ColumnGapSplitsItems(t *testing.T) {
+	fonts := map[string]map[string]interface{}{"F1": testFont()}
+
+	items := extractWith(t, fonts, "BT /F1 10 Tf 100 700 Td [(A) -3000 (B)] TJ ET")
+	if len(items) != 2 || items[0].Text != "A" || items[1].Text != "B" {
+		t.Fatalf("got %+v, want items A and B", items)
+	}
+	// B starts after A (6) and the 3 em move (30)
+	if !near(items[0].Width, 6) || !near(items[1].X, 136) || !near(items[1].Width, 7) {
+		t.Errorf("A: X %v width %v; B: X %v width %v; want 100/6, 136/7",
+			items[0].X, items[0].Width, items[1].X, items[1].Width)
+	}
+
+	words := oneItem(t, extractWith(t, fonts, "BT /F1 10 Tf 100 700 Td [(A) -1000 (B)] TJ ET"))
+	if words.Text != "A B" {
+		t.Errorf("text = %q, want \"A B\"", words.Text)
+	}
+}

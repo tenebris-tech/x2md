@@ -5,7 +5,11 @@
 
 package transform
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/tenebris-tech/x2md/pdf2md/models"
+)
 
 func TestIsOrderedListItem(t *testing.T) {
 	tests := []struct {
@@ -70,5 +74,25 @@ func TestIsOrderedListItem(t *testing.T) {
 				t.Errorf("isOrderedListItem(%q) = %v, want %v", tt.text, result, tt.expected)
 			}
 		})
+	}
+}
+
+// A table row whose first cell starts with a bullet stays a table row
+func TestDetectListItems_TableRowIsNotListItem(t *testing.T) {
+	row := &models.LineItem{
+		X: 72, Y: 100, Height: 10, Font: "F1",
+		Words:        []*models.Word{{String: "•"}, {String: "Item"}, {String: "Yes"}},
+		IsTableRow:   true,
+		TableColumns: []string{"• Item", "Yes"},
+	}
+	result := &models.ParseResult{
+		Pages:   []*models.Page{{Items: []interface{}{row}}},
+		Globals: &models.Globals{},
+	}
+	NewDetectListItems().Transform(result)
+
+	got, ok := result.Pages[0].Items[0].(*models.LineItem)
+	if !ok || !got.IsTableRow || got.Type != nil {
+		t.Errorf("got %+v, want the table row unchanged", result.Pages[0].Items[0])
 	}
 }

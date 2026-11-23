@@ -125,6 +125,7 @@ func (c *CalculateGlobalStats) Transform(result *models.ParseResult) *models.Par
 			Height:    page.Height,
 			IsScanned: page.IsScanned,
 			ScanImage: page.ScanImage,
+			Rules:     page.Rules,
 		}
 	}
 

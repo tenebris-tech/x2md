@@ -61,6 +61,9 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 
 	for _, page := range result.Pages {
 		var text strings.Builder
+		// A table continued from the previous page comes before any other
+		// content of its page; only there is a repeated header a repeat
+		firstContent := true
 
 		for _, item := range page.Items {
 			block, ok := item.(*models.TextBlock)
@@ -74,7 +77,7 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 			} else if isTableContent(block.Text) {
 				// Preserve newlines in table content
 				// Deduplicate table headers that repeat across pages
-				concatText = deduplicateTableHeader(block.Text, seenTableHeaders)
+				concatText = deduplicateTableHeader(block.Text, seenTableHeaders, firstContent)
 			} else {
 				concatText = newlinePattern.ReplaceAllString(block.Text, " ")
 			}
@@ -96,6 +99,7 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 
 			text.WriteString(concatText)
 			text.WriteString("\n\n")
+			firstContent = false
 		}
 
 		// Scanned pages have no text; reference the page image instead
@@ -143,10 +147,11 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 	lines := strings.Split(fullText, "\n")
 	var mergedLines []string
 	var inContinuationTable bool
-	currentPage := 0    // Page of the last marker seen
-	tableStart := -1    // Index in mergedLines of the current table's first row
-	tableFirstPage := 0 // Page the current table started on
-	heldPage := 0       // Page of a marker held back inside the current table
+	currentPage := 0      // Page of the last marker seen
+	tableStart := -1      // Index in mergedLines of the current table's first row
+	tableFirstPage := 0   // Page the current table started on
+	heldPage := 0         // Page of a marker held back inside the current table
+	hasSeparator := false // Whether the current table has its header separator
 
 	// nextIsTableRow reports whether the next line with content after i,
 	// ignoring page markers, is a table data row
@@ -175,6 +180,7 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 		inContinuationTable = false
 		tableStart = -1
 		heldPage = 0
+		hasSeparator = false
 	}
 
 	for i, line := range lines {
@@ -196,6 +202,11 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 			}
 			currentPage = page
 			mergedLines = append(mergedLines, line)
+		} else if isSeparator && inContinuationTable && hasSeparator {
+			// A table continued on the next page without repeating its
+			// header has its first row there taken as a header; a table
+			// has one header, so that row stays a data row
+			continue
 		} else if isTableRow || isSeparator {
 			if isTableRow && inContinuationTable && len(mergedLines) > 0 {
 				// Remove trailing empty lines before appending this row
@@ -209,6 +220,9 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 			}
 			mergedLines = append(mergedLines, line)
 			inContinuationTable = true
+			if isSeparator {
+				hasSeparator = true
+			}
 		} else if trimmed == "" && inContinuationTable {
 			if !nextIsTableRow(i) {
 				// End of table - add blank line
@@ -241,9 +255,11 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 	return result
 }
 
-// deduplicateTableHeader removes duplicate table headers from continuation tables
-// The first occurrence of a header is kept, subsequent ones are stripped
-func deduplicateTableHeader(text string, seenHeaders map[string]bool) string {
+// deduplicateTableHeader removes duplicate table headers from continuation tables.
+// The first occurrence of a header is kept; a later one is stripped when the
+// table starts its page (continuation), and kept otherwise (a new table that
+// happens to have the same header).
+func deduplicateTableHeader(text string, seenHeaders map[string]bool, startsPage bool) string {
 	lines := strings.Split(text, "\n")
 	if len(lines) < 2 {
 		return text
@@ -273,7 +289,7 @@ func deduplicateTableHeader(text string, seenHeaders map[string]bool) string {
 	headerLine := strings.TrimSpace(lines[headerIdx])
 	normalizedHeader := normalizeTableHeader(headerLine)
 
-	if seenHeaders[normalizedHeader] {
+	if seenHeaders[normalizedHeader] && startsPage {
 		// This is a duplicate header - remove header and separator
 		var result []string
 		for i, line := range lines {

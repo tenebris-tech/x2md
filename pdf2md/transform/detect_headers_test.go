@@ -45,3 +45,31 @@ func TestDetectHeaders_TallestListItemIsNotHeading(t *testing.T) {
 		t.Errorf("list item type = %v, want none", bullet.Type.Name)
 	}
 }
+
+// A table row is never a heading, however tall its text
+func TestDetectHeaders_TableRowIsNotHeading(t *testing.T) {
+	row := headerTestLine(100, 14, "Inventory")
+	row.IsTableRow = true
+	row.IsTableHeader = true
+	row.TableColumns = []string{"Inventory", ""}
+	heading := headerTestLine(60, 14, "Systems")
+	body := headerTestLine(160, 8, "Body text")
+
+	result := &models.ParseResult{
+		Pages: []*models.Page{{Items: []interface{}{heading, row, body}}},
+		Globals: &models.Globals{
+			MostUsedHeight:   8,
+			MostUsedFont:     "F1",
+			MostUsedDistance: 10,
+			MaxHeight:        14,
+		},
+	}
+	NewDetectHeaders().Transform(result)
+
+	if heading.Type != models.BlockTypeH1 {
+		t.Errorf("heading type = %v, want H1", heading.Type)
+	}
+	if row.Type != nil {
+		t.Errorf("table row type = %v, want none", row.Type.Name)
+	}
+}

@@ -117,3 +117,29 @@ func TestPageMarkers_TableWithinOnePage(t *testing.T) {
 		t.Errorf("unexpected output:\n%s", got)
 	}
 }
+
+// A table continued on the next page without its header has its first row
+// there taken as a header; the merged table keeps that row as data and has
+// one header separator
+func TestTableAcrossPages_FirstRowNotRepeatedHeader(t *testing.T) {
+	got := runToMarkdown(false,
+		textPage(0, "| Term | Meaning |\n| --- | --- |\n| A | First |"),
+		textPage(1, "| B | Second |\n| --- | --- |\n| C | Third |"),
+	)
+	want := "| Term | Meaning |\n| --- | --- |\n| A | First |\n| B | Second |\n| C | Third |\n\n"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A new table that has the same header as an earlier one keeps its header;
+// only a table continued at the top of the next page loses the repeat
+func TestTableHeader_RepeatedOnlyRemovedOnContinuation(t *testing.T) {
+	got := runToMarkdown(false,
+		textPage(0, "| A | B |\n| --- | --- |\n| 1 | 2 |", "Some prose"),
+		textPage(1, "More prose", "| A | B |\n| --- | --- |\n| 3 | 4 |"),
+	)
+	if strings.Count(got, "| A | B |") != 2 || strings.Count(got, "| --- | --- |") != 2 {
+		t.Errorf("both tables should keep their header, got:\n%s", got)
+	}
+}

@@ -130,6 +130,7 @@ type lineGroup struct {
 	isTableRow bool
 	isHeader   bool
 	columns    []float64 // column X positions for table rows
+	cells      []string  // text of each column, when known (ruled tables)
 }
 
 // Transform groups text items into lines
@@ -151,7 +152,7 @@ func (c *CompactLines) Transform(result *models.ParseResult) *models.ParseResult
 		}
 
 		// Detect table regions and group accordingly
-		groupedLines := c.groupByLineWithTableDetection(page.Items, mostUsedDistance, footerThreshold)
+		groupedLines := c.groupByLineWithTableDetection(page.Items, page.Rules, mostUsedDistance, footerThreshold)
 
 		// Convert grouped items to LineItems
 		var lineItems []interface{}
@@ -162,7 +163,11 @@ func (c *CompactLines) Transform(result *models.ParseResult) *models.ParseResult
 				if group.isTableRow {
 					lineItem.IsTableRow = true
 					lineItem.IsTableHeader = group.isHeader
-					lineItem.TableColumns = c.extractColumnTexts(group.items, group.columns)
+					if group.cells != nil {
+						lineItem.TableColumns = group.cells
+					} else {
+						lineItem.TableColumns = c.extractColumnTexts(group.items, group.columns)
+					}
 				}
 				lineItems = append(lineItems, lineItem)
 			}
@@ -219,8 +224,10 @@ func (c *CompactLines) extractColumnTexts(items []*models.TextItem, columns []fl
 	return result
 }
 
-// groupByLineWithTableDetection groups text items, detecting and handling tables
-func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, mostUsedDistance int, footerThreshold float64) []lineGroup {
+// groupByLineWithTableDetection groups text items, detecting and handling tables.
+// Tables drawn with rules come first; the text-based detection and the
+// 2-column layout logic see only the text outside them.
+func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, rules []models.Rule, mostUsedDistance int, footerThreshold float64) []lineGroup {
 	// Convert to TextItems and filter out invalid items
 	var textItems []*models.TextItem
 	for _, item := range items {
@@ -242,6 +249,30 @@ func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, mostUs
 		return nil
 	}
 
+	tables, inTable := c.detectRuledTables(textItems, rules)
+	if len(tables) > 0 {
+		var rest []*models.TextItem
+		for i, item := range textItems {
+			if !inTable[i] {
+				rest = append(rest, item)
+			}
+		}
+		var lines []lineGroup
+		splitX := 0.0
+		if len(rest) > 0 {
+			lines, splitX = c.groupTextLines(rest, mostUsedDistance, footerThreshold)
+		}
+		return placeRuledTables(lines, tables, splitX)
+	}
+
+	lines, _ := c.groupTextLines(textItems, mostUsedDistance, footerThreshold)
+	return lines
+}
+
+// groupTextLines groups text items into lines and text-based tables. When
+// the page is read as two columns, splitX is the left edge of the right
+// column (0 otherwise).
+func (c *CompactLines) groupTextLines(textItems []*models.TextItem, mostUsedDistance int, footerThreshold float64) (lines []lineGroup, splitX float64) {
 	// Identify table regions on the page
 	tableRegions := c.detectTableRegions(textItems, mostUsedDistance, footerThreshold)
 
@@ -261,7 +292,11 @@ func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, mostUs
 			for _, line := range rightLines {
 				result = append(result, lineGroup{items: line, isTableRow: false})
 			}
-			return result
+			splitX = rightItems[0].X
+			for _, item := range rightItems {
+				splitX = math.Min(splitX, item.X)
+			}
+			return result, splitX
 		}
 
 		// Standard Y-based grouping for single-column layouts
@@ -270,7 +305,7 @@ func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, mostUs
 		for i, line := range lines {
 			result[i] = lineGroup{items: line, isTableRow: false}
 		}
-		return result
+		return result, 0
 	}
 
 	// Process items: table regions get table grouping, others get standard grouping
@@ -335,7 +370,7 @@ func (c *CompactLines) groupByLineWithTableDetection(items []interface{}, mostUs
 		return allLines[i].items[0].Y < allLines[j].items[0].Y
 	})
 
-	return allLines
+	return allLines, 0
 }
 
 // groupAsTableWithMetadata converts text items into table rows with associated metadata.
@@ -1811,18 +1846,8 @@ func (c *CompactLines) combineTextWithContext(items []*models.TextItem, avgFontS
 				// Check if we're on a different Y line (cell wrap in table)
 				yDistance := math.Abs(item.Y - lastItem.Y)
 				if yDistance > yLineWrapThreshold {
-					// Different line - check if this is a word continuation
-					prevText := strings.TrimSpace(lastItem.Text)
-					nextTextTrimmed := strings.TrimSpace(textToAdd)
-
-					// Check for hyphen continuation
-					if strings.HasSuffix(prevText, "-") || strings.HasSuffix(prevText, "–") {
-						// Hyphen at end of line = continuation, no space needed
-					} else if c.isWordContinuation(prevText, nextTextTrimmed) {
-						// Likely a word continuation (e.g., "AutoUpda" + "te")
-						// No space needed
-					} else {
-						// Normal line wrap - add space
+					// Different line - add a space unless the word continues
+					if c.lineWrapNeedsSpace(lastItem.Text, textToAdd) {
 						text.WriteString(" ")
 						endsWithSpace = true
 					}
@@ -1849,6 +1874,17 @@ func (c *CompactLines) combineTextWithContext(items []*models.TextItem, avgFontS
 	}
 
 	return text.String()
+}
+
+// lineWrapNeedsSpace reports whether text that wraps from one line to the
+// next is separated by a space: not after a hyphen at the end of the line,
+// and not where the word continues (e.g., "AutoUpda" + "te")
+func (c *CompactLines) lineWrapNeedsSpace(prevText, nextText string) bool {
+	prevText = strings.TrimSpace(prevText)
+	if strings.HasSuffix(prevText, "-") || strings.HasSuffix(prevText, "–") {
+		return false
+	}
+	return !c.isWordContinuation(prevText, strings.TrimSpace(nextText))
 }
 
 // getEffectiveWidth returns the width of a text item on the page, estimated
