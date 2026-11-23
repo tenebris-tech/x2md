@@ -62,7 +62,7 @@ func newTestExtractor(t *testing.T) *Extractor {
 	if err := xml.Unmarshal([]byte(testNumberingXML), numbering); err != nil {
 		t.Fatalf("parsing numbering: %v", err)
 	}
-	return &Extractor{styles: styles, numbering: numbering, listCounters: make(map[int]map[int]int)}
+	return &Extractor{styles: styles, numbering: numbering, listCounters: make(map[listKey]map[int]int), startOverridesApplied: make(map[numLevel]bool)}
 }
 
 // directNumPr builds a direct numPr; a negative level omits w:ilvl
@@ -421,5 +421,69 @@ func TestLevelForStyle_LvlOverride(t *testing.T) {
 	}
 	if _, ok := numbering.LevelForStyle(60, "Replaced"); ok {
 		t.Error("LevelForStyle(Replaced) found a level the override replaces")
+	}
+}
+
+// Nums 70, 71 and 72 share abstractNum 70; 72 restarts level 0 at 1. Num 73
+// uses abstractNum 71. Num 74's abstractNum links to the numbering style
+// that abstractNum 70 defines, so it is the same list too.
+const sharedListNumberingXML = `<w:numbering ` + wordNS + `>
+<w:abstractNum w:abstractNumId="70"><w:styleLink w:val="SharedList"/>
+<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2"/></w:lvl>
+</w:abstractNum>
+<w:abstractNum w:abstractNumId="71">
+<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+</w:abstractNum>
+<w:abstractNum w:abstractNumId="72"><w:numStyleLink w:val="SharedList"/></w:abstractNum>
+<w:num w:numId="70"><w:abstractNumId w:val="70"/></w:num>
+<w:num w:numId="71"><w:abstractNumId w:val="70"/></w:num>
+<w:num w:numId="72"><w:abstractNumId w:val="70"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>
+<w:num w:numId="73"><w:abstractNumId w:val="71"/></w:num>
+<w:num w:numId="74"><w:abstractNumId w:val="72"/></w:num>
+</w:numbering>`
+
+func TestNextNumber_ListsAcrossNums(t *testing.T) {
+	tests := []struct {
+		name   string
+		numIDs []int // each paragraph at level 0
+		want   []string
+	}{
+		{"nums on one abstractNum continue one sequence", []int{70, 70, 71, 71}, []string{"1.", "2.", "3.", "4."}},
+		{"startOverride restarts once, then the list continues", []int{70, 70, 72, 72, 70}, []string{"1.", "2.", "1.", "2.", "3."}},
+		{"the first num continues after the restarted one", []int{70, 72, 72, 70}, []string{"1.", "1.", "2.", "3."}},
+		{"nums on different abstractNums are independent", []int{70, 73, 70, 73}, []string{"1.", "1.", "2.", "2."}},
+		{"numStyleLink joins the list it links to", []int{70, 74, 70}, []string{"1.", "2.", "3."}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newTestExtractor(t)
+			e.numbering = &Numbering{}
+			if err := xml.Unmarshal([]byte(sharedListNumberingXML), e.numbering); err != nil {
+				t.Fatalf("parsing numbering: %v", err)
+			}
+			var got []string
+			for _, numID := range tt.numIDs {
+				got = append(got, e.nextNumber(numID, 0).text)
+			}
+			if strings.Join(got, " ") != strings.Join(tt.want, " ") {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextNumber_StartOverrideRestartsDeeperLevels(t *testing.T) {
+	e := newTestExtractor(t)
+	e.numbering = &Numbering{}
+	if err := xml.Unmarshal([]byte(sharedListNumberingXML), e.numbering); err != nil {
+		t.Fatalf("parsing numbering: %v", err)
+	}
+	var got []string
+	for _, p := range []struct{ numID, level int }{{70, 0}, {70, 1}, {70, 0}, {72, 0}, {72, 1}} {
+		got = append(got, e.nextNumber(p.numID, p.level).text)
+	}
+	if want := "1. 1.1 2. 1. 1.1"; strings.Join(got, " ") != want {
+		t.Errorf("got %v, want %s", got, want)
 	}
 }

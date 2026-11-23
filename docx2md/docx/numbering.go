@@ -25,16 +25,22 @@ var plainListLabel = regexp.MustCompile(`^[0-9]+[.)]$`)
 // lvlTextPlaceholder matches %1 to %9 in a w:lvlText template
 var lvlTextPlaceholder = regexp.MustCompile(`%[1-9]`)
 
-// startValue returns the first number of a level: the num's w:startOverride,
-// else the level's w:start, else 0 (the OOXML default)
-func (n *Numbering) startValue(numID, level int) int {
-	if override := n.levelOverride(numID, level); override != nil && override.StartOverride != nil {
-		return override.StartOverride.Val
-	}
+// levelStart returns the number a level starts and restarts at: its
+// w:start (from a w:lvl in the num's w:lvlOverride when there is one),
+// else 0 (the OOXML default)
+func (n *Numbering) levelStart(numID, level int) int {
 	if lvl := n.GetLevel(numID, level); lvl != nil && lvl.Start != nil {
 		return lvl.Start.Val
 	}
 	return 0
+}
+
+// startOverride returns the num's w:startOverride for a level, if any
+func (n *Numbering) startOverride(numID, level int) (int, bool) {
+	if override := n.levelOverride(numID, level); override != nil && override.StartOverride != nil {
+		return override.StartOverride.Val, true
+	}
+	return 0, false
 }
 
 // restartsAfter reports whether an item at level used restarts deeper level.
@@ -48,19 +54,46 @@ func (n *Numbering) restartsAfter(numID, deeper, used int) bool {
 	return used < lvl.LvlRestart.Val
 }
 
-// nextNumber advances the counter of numID at level, restarts the deeper
-// levels it governs, and returns the paragraph's rendered label. Headings and
-// list items that share a numId share these counters in document order.
+// listKey identifies a list: all nums that reference one abstractNum (after
+// following w:numStyleLink) form one list with one sequence of numbers, as
+// Word numbers them. A num without a definition is a list of its own.
+type listKey struct {
+	abstractNumID int
+	numID         int // only set when the num has no abstractNum
+}
+
+// listKeyFor returns the list a num belongs to
+func (n *Numbering) listKeyFor(numID int) listKey {
+	if abstractNum := n.GetAbstractNum(numID); abstractNum != nil {
+		return listKey{abstractNumID: abstractNum.AbstractNumID}
+	}
+	return listKey{abstractNumID: -1, numID: numID}
+}
+
+// numLevel is a level of one num, for tracking its w:startOverride
+type numLevel struct{ numID, level int }
+
+// nextNumber advances the list counter at level, restarts the deeper levels
+// it governs, and returns the paragraph's rendered label. Headings and list
+// items share these counters in document order, across every num of the
+// same abstractNum. A num's w:startOverride sets the counter the first time
+// that num is used at that level; later items continue from there.
 func (e *Extractor) nextNumber(numID, level int) numberLabel {
-	counters := e.listCounters[numID]
+	key := e.numbering.listKeyFor(numID)
+	counters := e.listCounters[key]
 	if counters == nil {
 		counters = make(map[int]int)
-		e.listCounters[numID] = counters
+		e.listCounters[key] = counters
 	}
-	if v, ok := counters[level]; ok {
+	start, overridden := e.numbering.startOverride(numID, level)
+	switch v, ok := counters[level]; {
+	case overridden && !e.startOverridesApplied[numLevel{numID, level}]:
+		e.startOverridesApplied[numLevel{numID, level}] = true
+		counters[level] = start
+	case ok:
 		counters[level] = v + 1
-	} else {
-		counters[level] = e.numbering.startValue(numID, level)
+	default:
+		counters[level] = e.numbering.levelStart(numID, level)
 	}
 	for deeper := range counters {
 		if deeper > level && e.numbering.restartsAfter(numID, deeper, level) {
@@ -88,9 +121,9 @@ func (e *Extractor) renderNumber(numID, level int) numberLabel {
 	label.text = lvlTextPlaceholder.ReplaceAllStringFunc(lvl.LvlText.Val, func(ph string) string {
 		ref, _ := strconv.Atoi(ph[1:])
 		ref--
-		value, ok := e.listCounters[numID][ref]
+		value, ok := e.listCounters[e.numbering.listKeyFor(numID)][ref]
 		if !ok {
-			value = e.numbering.startValue(numID, ref)
+			value = e.numbering.levelStart(numID, ref)
 		}
 		format := "decimal"
 		if refLvl := e.numbering.GetLevel(numID, ref); refLvl != nil && refLvl.NumFmt != nil {

@@ -193,7 +193,7 @@ Per OOXML specification, text runs (`<w:r>`) concatenate directly without implic
 
 #### List and Heading Numbering (`docx2md/docx/numbering.go`, `styles.go`)
 - `resolveNumbering()` takes `w:numPr` from the paragraph, else from its style's `basedOn` chain; `numId` 0 turns numbering off; a missing level comes from `w:lvl/w:pStyle`
-- `nextNumber()` advances per-numId counters shared by headings and list items in document order (`w:start`, `w:startOverride`, `w:lvlRestart`) and renders `w:lvlText` ("%1.%2", "(%3)") in each level's numFmt, or decimal under `w:isLgl`
+- `nextNumber()` advances counters shared by headings and list items in document order, one set per list: as in Word, every `w:num` on the same abstractNum (after `numStyleLink`) continues one sequence, and a num's `w:startOverride` sets its level once, the first time that num is used at that level (`w:start`, `w:lvlRestart` as usual). It renders `w:lvlText` ("%1.%2", "(%3)") in each level's numFmt, or decimal under `w:isLgl`
 - `w:lvlOverride/w:lvl` replaces a level; `w:numStyleLink` resolves to the abstractNum with the matching `w:styleLink`
 - Headings show the label before their text ("# 1. Services", "## 1.1 Fees"); bullet/none levels show none
 - List items: a decimal "N." / "N)" label is the list marker; any other label is kept after a bullet ("- a) Text", "- 1.1 Text", "- (a) Text"); bullets are "-"

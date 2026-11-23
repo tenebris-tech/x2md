@@ -26,7 +26,8 @@ type Extractor struct {
 	endnotes      *Endnotes
 
 	// List tracking
-	listCounters map[int]map[int]int // numId -> level -> counter
+	listCounters          map[listKey]map[int]int // list -> level -> counter
+	startOverridesApplied map[numLevel]bool       // num levels whose startOverride has been used
 
 	// Image tracking
 	images       []*models.ImageItem
@@ -65,13 +66,14 @@ func NewExtractor(parser *Parser) (*Extractor, error) {
 	}
 
 	return &Extractor{
-		parser:        parser,
-		styles:        styles,
-		numbering:     numbering,
-		relationships: rels,
-		footnotes:     footnotes,
-		endnotes:      endnotes,
-		listCounters:  make(map[int]map[int]int),
+		parser:                parser,
+		styles:                styles,
+		numbering:             numbering,
+		relationships:         rels,
+		footnotes:             footnotes,
+		endnotes:              endnotes,
+		listCounters:          make(map[listKey]map[int]int),
+		startOverridesApplied: make(map[numLevel]bool),
 	}, nil
 }
 
