@@ -421,6 +421,8 @@ make fmt          # rewrite Go files with gofmt (make test only verifies)
 
 `make test-private` runs the tests that need the private document corpus in `private/`, which is not in the repository. It fails, naming the file, if a document is missing.
 
+`make score` converts every distinct PDF in `private/` twice and scores its reading order against `pdftotext`. It fails if a file converts differently twice, newly fails to convert, or scores worse than the baseline; `make score-accept` records the run as the new baseline. Results are kept in `private/.score/`.
+
 ### Cross-Compilation
 
 ```bash

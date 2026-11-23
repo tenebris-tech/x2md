@@ -28,6 +28,11 @@ make
 make build
 make clean
 
+# PDF corpus score (private/, needs pdftotext): fails if a PDF converts
+# differently twice, newly errors, or scores worse than the baseline
+make score
+make score-accept                   # same run, recorded as the new baseline
+
 # Inner loop while iterating
 go test ./some/package
 ```
