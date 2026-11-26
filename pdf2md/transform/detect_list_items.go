@@ -67,7 +67,8 @@ func (d *DetectListItems) Transform(result *models.ParseResult) *models.ParseRes
 				continue
 			}
 
-			if lineItem.Type != nil {
+			// Table rows are never list items
+			if lineItem.Type != nil || lineItem.IsTableRow {
 				newItems = append(newItems, item)
 				continue
 			}

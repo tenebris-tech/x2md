@@ -55,6 +55,85 @@ func (s *Styles) GetStyle(id string) *StyleDef {
 	return nil
 }
 
+// styleChain returns the style and its basedOn ancestors, nearest first.
+// A cycle in the basedOn chain ends the walk.
+func (s *Styles) styleChain(id string) []*StyleDef {
+	var chain []*StyleDef
+	seen := make(map[string]bool)
+	for id != "" && !seen[id] {
+		seen[id] = true
+		style := s.GetStyle(id)
+		if style == nil {
+			break
+		}
+		chain = append(chain, style)
+		if style.BasedOn == nil {
+			break
+		}
+		id = style.BasedOn.Val
+	}
+	return chain
+}
+
+// StyleNumbering returns the numbering a paragraph style gives its
+// paragraphs, following the basedOn chain. numID comes from the nearest
+// style that sets it; level only from that style or a nearer one, so it
+// never comes from an ancestor that belongs to another numbering. Both are
+// nil when not set. A numID of 0 means the style turns numbering off.
+func (s *Styles) StyleNumbering(styleID string) (numID *NumID, level *ILevel) {
+	for _, style := range s.styleChain(styleID) {
+		if style.ParagraphProperties == nil || style.ParagraphProperties.NumPr == nil {
+			continue
+		}
+		numPr := style.ParagraphProperties.NumPr
+		if level == nil && numPr.ILevel != nil {
+			level = numPr.ILevel
+		}
+		if numPr.NumID != nil {
+			return numPr.NumID, level
+		}
+	}
+	return nil, nil
+}
+
+// ListStyleDepth returns the nesting depth implied by Word's built-in list
+// style names "List N", "List Bullet N" and "List Number N" (depth N-1),
+// taken from the nearest style in the basedOn chain with such a name.
+// These styles are usually bound to separate single-level lists whose only
+// sign of nesting is their indentation. Other styles return 0.
+func (s *Styles) ListStyleDepth(styleID string) int {
+	for _, style := range s.styleChain(styleID) {
+		if style.Name == nil {
+			continue
+		}
+		if depth, ok := builtInListDepth(style.Name.Val); ok {
+			return depth
+		}
+	}
+	return 0
+}
+
+// builtInListDepth reports whether name is one of Word's built-in list
+// style names ("List", "List Bullet", "List Number", optionally followed
+// by 2-9) and the nesting depth it implies.
+func builtInListDepth(name string) (int, bool) {
+	name = strings.ToLower(name)
+	for _, base := range []string{"list bullet", "list number", "list"} {
+		rest, ok := strings.CutPrefix(name, base)
+		if !ok {
+			continue
+		}
+		if rest == "" {
+			return 0, true
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(rest, " "))
+		if strings.HasPrefix(rest, " ") && err == nil && n >= 2 && n <= 9 {
+			return n - 1, true
+		}
+	}
+	return 0, false
+}
+
 // IsHeading checks if a style is a heading and returns the level (1-6)
 func (s *Styles) IsHeading(styleID string) (bool, int) {
 	style := s.GetStyle(styleID)
@@ -143,6 +222,8 @@ type AbstractNum struct {
 	XMLName       xml.Name      `xml:"abstractNum"`
 	AbstractNumID int           `xml:"abstractNumId,attr"`
 	Levels        []NumberLevel `xml:"lvl"`
+	NumStyleLink  *StyleRef     `xml:"numStyleLink"` // levels are defined by the abstractNum with this styleLink
+	StyleLink     *StyleRef     `xml:"styleLink"`    // this abstractNum defines the numbering style
 }
 
 // NumberLevel defines a numbering level
@@ -153,10 +234,13 @@ type NumberLevel struct {
 	NumFmt      *NumFmt      `xml:"numFmt"`
 	LvlText     *LvlText     `xml:"lvlText"`
 	LvlJc       *LvlJc       `xml:"lvlJc"`
+	PStyle      *StyleRef    `xml:"pStyle"` // paragraph style bound to this level
+	LvlRestart  *NumStart    `xml:"lvlRestart"`
+	IsLgl       *BoolProp    `xml:"isLgl"` // show every level's number as decimal
 	Indentation *Indentation `xml:"pPr>ind"`
 }
 
-// NumStart specifies the starting number
+// NumStart holds an integer w:val (w:start, w:lvlRestart, w:startOverride)
 type NumStart struct {
 	Val int `xml:"val,attr"`
 }
@@ -181,6 +265,14 @@ type Num struct {
 	XMLName       xml.Name          `xml:"num"`
 	NumID         int               `xml:"numId,attr"`
 	AbstractNumID *AbstractNumIDRef `xml:"abstractNumId"`
+	LvlOverrides  []LvlOverride     `xml:"lvlOverride"`
+}
+
+// LvlOverride overrides one level of a num's abstract definition
+type LvlOverride struct {
+	ILevel        int          `xml:"ilvl,attr"`
+	StartOverride *NumStart    `xml:"startOverride"`
+	Level         *NumberLevel `xml:"lvl"`
 }
 
 // AbstractNumIDRef references an abstract numbering definition
@@ -207,16 +299,64 @@ func (n *Numbering) GetAbstractNum(numID int) *AbstractNum {
 	}
 
 	// Find the abstract num
+	var abstractNum *AbstractNum
 	for i := range n.AbstractNums {
 		if n.AbstractNums[i].AbstractNumID == abstractNumID {
+			abstractNum = &n.AbstractNums[i]
+			break
+		}
+	}
+
+	// An abstractNum that only links to a numbering style takes its levels
+	// from the abstractNum that defines that style. The hop limit guards
+	// against link cycles.
+	for hops := 0; abstractNum != nil && abstractNum.NumStyleLink != nil && hops < len(n.AbstractNums); hops++ {
+		abstractNum = n.styleLinkTarget(abstractNum.NumStyleLink.Val)
+	}
+	return abstractNum
+}
+
+// styleLinkTarget returns the abstractNum that defines numbering style styleID
+func (n *Numbering) styleLinkTarget(styleID string) *AbstractNum {
+	for i := range n.AbstractNums {
+		if link := n.AbstractNums[i].StyleLink; link != nil && link.Val == styleID {
 			return &n.AbstractNums[i]
 		}
 	}
 	return nil
 }
 
-// GetLevel returns the level definition for a numId and level
+// getNum returns the num element for a numId
+func (n *Numbering) getNum(numID int) *Num {
+	for i := range n.Nums {
+		if n.Nums[i].NumID == numID {
+			return &n.Nums[i]
+		}
+	}
+	return nil
+}
+
+// levelOverride returns numID's override of a level, or nil
+func (n *Numbering) levelOverride(numID, level int) *LvlOverride {
+	num := n.getNum(numID)
+	if num == nil {
+		return nil
+	}
+	for i := range num.LvlOverrides {
+		if num.LvlOverrides[i].ILevel == level {
+			return &num.LvlOverrides[i]
+		}
+	}
+	return nil
+}
+
+// GetLevel returns the level definition for a numId and level. A w:lvl in
+// the num's w:lvlOverride replaces the abstract definition's level.
 func (n *Numbering) GetLevel(numID, level int) *NumberLevel {
+	if override := n.levelOverride(numID, level); override != nil && override.Level != nil {
+		return override.Level
+	}
+
 	abstractNum := n.GetAbstractNum(numID)
 	if abstractNum == nil {
 		return nil
@@ -230,69 +370,58 @@ func (n *Numbering) GetLevel(numID, level int) *NumberLevel {
 	return nil
 }
 
-// IsBullet checks if a numbering level is a bullet list
-func (n *Numbering) IsBullet(numID, level int) bool {
-	lvl := n.GetLevel(numID, level)
-	if lvl == nil {
-		return false
+// LevelForStyle returns the level of numID's definition that is bound to
+// the paragraph style styleID through w:lvl/w:pStyle, taking a w:lvl in the
+// num's w:lvlOverride in place of the abstract definition's level.
+func (n *Numbering) LevelForStyle(numID int, styleID string) (int, bool) {
+	if styleID == "" {
+		return 0, false
 	}
-	if lvl.NumFmt != nil && lvl.NumFmt.Val == "bullet" {
-		return true
-	}
-	return false
-}
-
-// GetListPrefix returns the list prefix for a numbered item
-func (n *Numbering) GetListPrefix(numID, level, itemNum int) string {
-	lvl := n.GetLevel(numID, level)
-	if lvl == nil {
-		return "- "
-	}
-
-	if lvl.NumFmt != nil {
-		switch lvl.NumFmt.Val {
-		case "bullet":
-			return "- "
-		case "decimal":
-			return formatNumber(itemNum, "decimal") + ". "
-		case "lowerLetter":
-			return formatNumber(itemNum, "lowerLetter") + ". "
-		case "upperLetter":
-			return formatNumber(itemNum, "upperLetter") + ". "
-		case "lowerRoman":
-			return formatNumber(itemNum, "lowerRoman") + ". "
-		case "upperRoman":
-			return formatNumber(itemNum, "upperRoman") + ". "
-		case "none":
-			return ""
+	for level := 0; level <= maxNumberingLevel; level++ {
+		if lvl := n.GetLevel(numID, level); lvl != nil && lvl.PStyle != nil && lvl.PStyle.Val == styleID {
+			return level, true
 		}
 	}
-
-	return "- "
+	return 0, false
 }
 
-// formatNumber converts a number to the specified format
+// maxNumberingLevel is the deepest w:ilvl WordprocessingML allows
+const maxNumberingLevel = 8
+
+// formatNumber renders a number in a w:numFmt format. "none" and "bullet"
+// render as nothing; unknown formats render as decimal.
 func formatNumber(n int, format string) string {
 	switch format {
-	case "decimal":
-		return strconv.Itoa(n)
+	case "none", "bullet":
+		return ""
+	case "decimalZero":
+		if n >= 0 && n < 10 {
+			return "0" + strconv.Itoa(n)
+		}
 	case "lowerLetter":
-		if n >= 1 && n <= 26 {
-			return string(rune('a' + n - 1))
+		if n >= 1 {
+			return letters(n, 'a')
 		}
-		return string(rune('a' + (n-1)%26))
 	case "upperLetter":
-		if n >= 1 && n <= 26 {
-			return string(rune('A' + n - 1))
+		if n >= 1 {
+			return letters(n, 'A')
 		}
-		return string(rune('A' + (n-1)%26))
 	case "lowerRoman":
-		return toRoman(n, false)
+		if r := toRoman(n, false); r != "" {
+			return r
+		}
 	case "upperRoman":
-		return toRoman(n, true)
-	default:
-		return strconv.Itoa(n)
+		if r := toRoman(n, true); r != "" {
+			return r
+		}
 	}
+	return strconv.Itoa(n)
+}
+
+// letters renders n as Word does: a-z, then aa-zz, then aaa-zzz, ...
+func letters(n int, first rune) string {
+	letter := string(first + rune((n-1)%26))
+	return strings.Repeat(letter, (n-1)/26+1)
 }
 
 // toRoman converts a number to Roman numerals

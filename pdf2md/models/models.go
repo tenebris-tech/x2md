@@ -18,6 +18,7 @@ type TextItem struct {
 	Height         float64
 	Text           string
 	Font           string
+	Rotated        bool // baseline not horizontal (see pdf.TextItem)
 	LineFormat     *WordFormat
 	UnopenedFormat *WordFormat
 	UnclosedFormat *WordFormat
@@ -31,6 +32,14 @@ type Page struct {
 	Height    float64       // Page height in points
 	IsScanned bool          // Whether this page is a scanned image
 	ScanImage string        // Image ID of the page scan, if IsScanned and an image was extracted
+	Rules     []Rule        // Horizontal and vertical lines drawn on the page
+}
+
+// Rule is a straight horizontal or vertical line drawn on a page, in the
+// coordinates of text items (Y grows downward). X1 <= X2 and Y1 <= Y2; a
+// horizontal rule has Y1 == Y2 and a vertical rule X1 == X2.
+type Rule struct {
+	X1, Y1, X2, Y2 float64
 }
 
 // Word represents a word with optional formatting

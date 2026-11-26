@@ -61,6 +61,9 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 
 	for _, page := range result.Pages {
 		var text strings.Builder
+		// A table continued from the previous page comes before any other
+		// content of its page; only there is a repeated header a repeat
+		firstContent := true
 
 		for _, item := range page.Items {
 			block, ok := item.(*models.TextBlock)
@@ -74,7 +77,7 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 			} else if isTableContent(block.Text) {
 				// Preserve newlines in table content
 				// Deduplicate table headers that repeat across pages
-				concatText = deduplicateTableHeader(block.Text, seenTableHeaders)
+				concatText = deduplicateTableHeader(block.Text, seenTableHeaders, firstContent)
 			} else {
 				concatText = newlinePattern.ReplaceAllString(block.Text, " ")
 			}
@@ -96,6 +99,7 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 
 			text.WriteString(concatText)
 			text.WriteString("\n\n")
+			firstContent = false
 		}
 
 		// Scanned pages have no text; reference the page image instead
@@ -121,8 +125,16 @@ func (t *ToMarkdown) Transform(result *models.ParseResult) *models.ParseResult {
 // mergeTablesCrossPages merges continuation table rows across page boundaries
 func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.ParseResult {
 	// Collect all page content
+	// A page break line between pages marks where one ends whether or not
+	// page markers are written; it is never emitted
 	var allContent strings.Builder
-	for _, page := range result.Pages {
+	for i, page := range result.Pages {
+		if i > 0 {
+			if text := allContent.String(); text != "" && !strings.HasSuffix(text, "\n") {
+				allContent.WriteString("\n")
+			}
+			allContent.WriteString(pageBreakLine + "\n")
+		}
 		for _, item := range page.Items {
 			if text, ok := item.(string); ok {
 				allContent.WriteString(text)
@@ -143,23 +155,30 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 	lines := strings.Split(fullText, "\n")
 	var mergedLines []string
 	var inContinuationTable bool
-	currentPage := 0    // Page of the last marker seen
-	tableStart := -1    // Index in mergedLines of the current table's first row
-	tableFirstPage := 0 // Page the current table started on
-	heldPage := 0       // Page of a marker held back inside the current table
+	currentPage := 0      // Page of the last marker seen
+	tableStart := -1      // Index in mergedLines of the current table's first row
+	tableFirstPage := 0   // Page the current table started on
+	heldPage := 0         // Page of a marker held back inside the current table
+	hasSeparator := false // Whether the current table has its header separator
+	tableColumns := 0     // Number of columns of the current table's last row
+	pageEnded := false    // Whether a page has ended since the table's last row
 
-	// nextIsTableRow reports whether the next line with content after i,
-	// ignoring page markers, is a table data row
-	nextIsTableRow := func(i int) bool {
-		for j := i + 1; j < len(lines); j++ {
+	// continues reports whether the current table goes on after line i: the
+	// next line with content is a data row with as many columns, and a page
+	// ends in between. Two tables on one page are never one table.
+	continues := func(i int) bool {
+		crossed := pageEnded
+		for j := i; j < len(lines); j++ {
 			nextTrimmed := strings.TrimSpace(lines[j])
-			if nextTrimmed == "" {
+			if _, ok := parsePageMarker(nextTrimmed); ok || nextTrimmed == pageBreakLine {
+				crossed = true
 				continue
 			}
-			if _, ok := parsePageMarker(nextTrimmed); ok {
+			if j == i || nextTrimmed == "" {
 				continue
 			}
-			return strings.HasPrefix(nextTrimmed, "|") && !strings.Contains(nextTrimmed, "---")
+			return crossed && strings.HasPrefix(nextTrimmed, "|") && !strings.Contains(nextTrimmed, "---") &&
+				tableRowColumns(nextTrimmed) == tableColumns
 		}
 		return false
 	}
@@ -175,6 +194,7 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 		inContinuationTable = false
 		tableStart = -1
 		heldPage = 0
+		hasSeparator = false
 	}
 
 	for i, line := range lines {
@@ -184,8 +204,17 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 		isTableRow := strings.HasPrefix(trimmed, "|") && !strings.Contains(trimmed, "---")
 		isSeparator := strings.HasPrefix(trimmed, "|") && strings.Contains(trimmed, "---")
 
+		if trimmed == pageBreakLine {
+			if inContinuationTable && !continues(i) {
+				endTable()
+			}
+			pageEnded = true
+			continue
+		}
+
 		if page, ok := parsePageMarker(trimmed); ok {
-			if inContinuationTable && nextIsTableRow(i) {
+			pageEnded = true
+			if inContinuationTable && continues(i) {
 				// Table continues onto this page - hold the marker back
 				heldPage = page
 				currentPage = page
@@ -196,6 +225,11 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 			}
 			currentPage = page
 			mergedLines = append(mergedLines, line)
+		} else if isSeparator && inContinuationTable && hasSeparator {
+			// A table continued on the next page without repeating its
+			// header has its first row there taken as a header; a table
+			// has one header, so that row stays a data row
+			continue
 		} else if isTableRow || isSeparator {
 			if isTableRow && inContinuationTable && len(mergedLines) > 0 {
 				// Remove trailing empty lines before appending this row
@@ -209,8 +243,14 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 			}
 			mergedLines = append(mergedLines, line)
 			inContinuationTable = true
+			if isSeparator {
+				hasSeparator = true
+			} else {
+				tableColumns = tableRowColumns(trimmed)
+			}
+			pageEnded = false
 		} else if trimmed == "" && inContinuationTable {
-			if !nextIsTableRow(i) {
+			if !continues(i) {
 				// End of table - add blank line
 				endTable()
 				mergedLines = append(mergedLines, line)
@@ -241,9 +281,21 @@ func (t *ToMarkdown) mergeTablesCrossPages(result *models.ParseResult) *models.P
 	return result
 }
 
-// deduplicateTableHeader removes duplicate table headers from continuation tables
-// The first occurrence of a header is kept, subsequent ones are stripped
-func deduplicateTableHeader(text string, seenHeaders map[string]bool) string {
+// pageBreakLine separates the text of two pages while tables are merged
+// across pages; it is never part of the output
+const pageBreakLine = "\x00page-break"
+
+// tableRowColumns returns the number of cells in a Markdown table row: its
+// pipes less one, not counting pipes escaped inside cells (\|)
+func tableRowColumns(row string) int {
+	return strings.Count(row, "|") - strings.Count(row, `\|`) - 1
+}
+
+// deduplicateTableHeader removes duplicate table headers from continuation tables.
+// The first occurrence of a header is kept; a later one is stripped when the
+// table starts its page (continuation), and kept otherwise (a new table that
+// happens to have the same header).
+func deduplicateTableHeader(text string, seenHeaders map[string]bool, startsPage bool) string {
 	lines := strings.Split(text, "\n")
 	if len(lines) < 2 {
 		return text
@@ -273,7 +325,7 @@ func deduplicateTableHeader(text string, seenHeaders map[string]bool) string {
 	headerLine := strings.TrimSpace(lines[headerIdx])
 	normalizedHeader := normalizeTableHeader(headerLine)
 
-	if seenHeaders[normalizedHeader] {
+	if seenHeaders[normalizedHeader] && startsPage {
 		// This is a duplicate header - remove header and separator
 		var result []string
 		for i, line := range lines {

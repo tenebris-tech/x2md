@@ -63,12 +63,13 @@ func (d *DetectHeaders) Transform(result *models.ParseResult) *models.ParseResul
 		for _, page := range pagesWithMaxHeight {
 			for _, item := range page.Items {
 				lineItem, ok := item.(*models.LineItem)
-				if !ok || lineItem.Type != nil {
+				// Table rows are never headings
+				if !ok || lineItem.Type != nil || lineItem.IsTableRow {
 					continue
 				}
 
 				height := int(lineItem.Height)
-				if height >= minHeightThreshold && height > min2ndLevelHeight {
+				if height >= minHeightThreshold && height > min2ndLevelHeight && !isListItem(lineItem.Text()) {
 					if height == maxHeight {
 						lineItem.Type = models.BlockTypeH1
 					} else {
@@ -94,7 +95,7 @@ func (d *DetectHeaders) Transform(result *models.ParseResult) *models.ParseResul
 			for _, page := range result.Pages {
 				for _, item := range page.Items {
 					lineItem, ok := item.(*models.LineItem)
-					if !ok || lineItem.Type != nil {
+					if !ok || lineItem.Type != nil || lineItem.IsTableRow {
 						continue
 					}
 
@@ -133,7 +134,7 @@ func (d *DetectHeaders) Transform(result *models.ParseResult) *models.ParseResul
 				}
 
 				text := lineItem.Text()
-				if lineItem.Type == nil &&
+				if lineItem.Type == nil && !lineItem.IsTableRow &&
 					int(lineItem.Height) == mostUsedHeight &&
 					lineItem.Font != mostUsedFont &&
 					(lastItem == nil ||

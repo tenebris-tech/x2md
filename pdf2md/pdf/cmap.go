@@ -284,6 +284,18 @@ func (c *CMap) DecodeString(data []byte) string {
 	return result.String()
 }
 
+// decodeTwoByte decodes 2-byte character codes; a code with no mapping is
+// left out, and an odd byte at the end is ignored
+func (c *CMap) decodeTwoByte(data []byte) string {
+	var result strings.Builder
+	for i := 0; i+1 < len(data); i += 2 {
+		if dst, ok := c.mapping[int(data[i])<<8|int(data[i+1])]; ok {
+			result.WriteString(bytesToUTF8(dst))
+		}
+	}
+	return result.String()
+}
+
 // bytesToUTF8 converts CMap destination bytes to UTF-8 string
 // CMap destinations are stored as big-endian Unicode code points
 func bytesToUTF8(s string) string {

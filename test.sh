@@ -250,6 +250,17 @@ else
     fail "3.5 default output is written next to the input" "exit $CLI_EXIT: $(cat "$CLI_ERR")"
 fi
 
+# The steps are numbered and the bullet nested only through their Word styles
+steps=0
+for i in 1 2 3 4 5; do
+    grep -q "^$i\. Step $i: notify" "$WORK/procedure.docx.md" && steps=$((steps + 1))
+done
+if [ "$steps" -eq 5 ] && grep -q "^    - Nested bullet$" "$WORK/procedure.docx.md"; then
+    pass "3.6 DOCX list numbered through its paragraph style"
+else
+    fail "3.6 DOCX list numbered through its paragraph style" "$(grep -E 'Step [1-5]|Nested bullet' "$WORK/procedure.docx.md")"
+fi
+
 # ---------------------------------------------------------------------------
 section "4. CLI end-to-end: location contract"
 
@@ -349,6 +360,8 @@ expect_error "5.5 corrupt DOCX" "." -output "$WORK/x.md" "$WORK/broken.docx"
 expect_error "5.6 unknown flag" "flag provided but not defined" -no-such-flag testdata/pages.pdf
 
 expect_error "5.7 -output with a directory" "cannot be used with directories" -output "$WORK/x.md" testdata
+
+expect_error "5.8 unsupported file type without -output" "unsupported file type" "$WORK/note.txt"
 
 # ---------------------------------------------------------------------------
 section "6. Cleanup and final verification"

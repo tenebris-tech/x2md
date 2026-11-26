@@ -222,6 +222,14 @@ func main() {
 		return
 	}
 
+	// A single file of an unsupported type is an error; in a directory it is skipped
+	if info, err := os.Stat(inputPath); err == nil && !info.IsDir() {
+		if err := checkSupported(inputPath); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	// Use convert package for all other cases
 	converter := convert.New(converterOpts...)
 	result, err := converter.Convert(inputPath)
@@ -265,6 +273,16 @@ func convertSingleFile(inputPath, outputPath string, pdfOpts []pdf2md.Option, do
 	case ".xlsx":
 		converter := xlsx2md.New(xlsxOpts...)
 		return converter.ConvertFileToFile(inputPath, outputPath)
+	default:
+		return checkSupported(inputPath)
+	}
+}
+
+// checkSupported returns an error when the file type cannot be converted
+func checkSupported(path string) error {
+	switch ext := getExtension(path); ext {
+	case ".pdf", ".docx", ".xlsx":
+		return nil
 	default:
 		return fmt.Errorf("unsupported file type: %s (supported: .pdf, .docx, .xlsx)", ext)
 	}

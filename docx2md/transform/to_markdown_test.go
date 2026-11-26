@@ -65,6 +65,17 @@ func TestToMarkdown_MarkerPlacement(t *testing.T) {
 	}
 }
 
+func TestToMarkdown_ListEndsWithBlankLine(t *testing.T) {
+	got := render(false,
+		&models.TextBlock{Category: "LIST", Text: "1. one\n    - two", Paragraph: 3},
+		&models.TextBlock{Category: "paragraph", Text: "After", Paragraph: 5},
+	)
+	want := "1. one\n    - two\n\nAfter\n\n"
+	if got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
 func TestToMarkdown_MarkersDisabled(t *testing.T) {
 	got := render(false,
 		&models.TextBlock{Category: "H1", Text: "# Title", Paragraph: 1},

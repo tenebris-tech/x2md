@@ -63,7 +63,8 @@ func (c *CalculateGlobalStats) Transform(result *models.ParseResult) *models.Par
 
 			if int(textItem.Height) == mostUsedHeight && strings.TrimSpace(textItem.Text) != "" {
 				if lastItemOfMostUsedHeight != nil && textItem.Y != lastItemOfMostUsedHeight.Y {
-					distance := int(lastItemOfMostUsedHeight.Y - textItem.Y)
+					// Y grows down the page, so the next line has the larger Y
+					distance := int(textItem.Y - lastItemOfMostUsedHeight.Y)
 					if distance > 0 {
 						distanceToOccurrence[distance]++
 					}
@@ -124,6 +125,7 @@ func (c *CalculateGlobalStats) Transform(result *models.ParseResult) *models.Par
 			Height:    page.Height,
 			IsScanned: page.IsScanned,
 			ScanImage: page.ScanImage,
+			Rules:     page.Rules,
 		}
 	}
 
@@ -141,11 +143,13 @@ func (c *CalculateGlobalStats) Transform(result *models.ParseResult) *models.Par
 	}
 }
 
+// getMostUsedKey returns the key with the highest count. On a tie the
+// smallest key wins, so the result does not depend on map iteration order.
 func getMostUsedKey(m map[int]int) int {
 	var maxOccurrence int
 	var maxKey int
 	for key, occurrence := range m {
-		if occurrence > maxOccurrence {
+		if occurrence > maxOccurrence || (occurrence == maxOccurrence && key < maxKey) {
 			maxOccurrence = occurrence
 			maxKey = key
 		}
@@ -153,11 +157,12 @@ func getMostUsedKey(m map[int]int) int {
 	return maxKey
 }
 
+// getMostUsedKeyStr is getMostUsedKey for string keys
 func getMostUsedKeyStr(m map[string]int) string {
 	var maxOccurrence int
 	var maxKey string
 	for key, occurrence := range m {
-		if occurrence > maxOccurrence {
+		if occurrence > maxOccurrence || (occurrence == maxOccurrence && key < maxKey) {
 			maxOccurrence = occurrence
 			maxKey = key
 		}

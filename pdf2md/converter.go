@@ -400,12 +400,13 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 		var items []interface{}
 		for _, ti := range textItems {
 			items = append(items, &models.TextItem{
-				X:      ti.X,
-				Y:      ti.Y,
-				Width:  ti.Width,
-				Height: ti.Height,
-				Text:   ti.Text,
-				Font:   ti.Font,
+				X:       ti.X,
+				Y:       ti.Y,
+				Width:   ti.Width,
+				Height:  ti.Height,
+				Text:    ti.Text,
+				Font:    ti.Font,
+				Rotated: ti.Rotated,
 			})
 		}
 
@@ -432,11 +433,17 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 			}
 		}
 
+		var rules []models.Rule
+		for _, r := range extractor.Rules() {
+			rules = append(rules, models.Rule{X1: r.X1, Y1: r.Y1, X2: r.X2, Y2: r.Y2})
+		}
+
 		pages = append(pages, &models.Page{
 			Index:  i,
 			Items:  items,
 			Width:  pageWidth,
 			Height: pageHeight,
+			Rules:  rules,
 		})
 
 		if c.options.OnPageParsed != nil {

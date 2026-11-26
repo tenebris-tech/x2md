@@ -74,6 +74,14 @@ func (t *GatherBlocks) Transform(result *models.ParseResult) *models.ParseResult
 					}
 					currentBlock = &models.LineItemBlock{Type: models.BlockTypeList}
 				}
+				// An item can be at most one level below the item above it,
+				// and the first item of a list is at level 0. Deeper indents
+				// would make Markdown read the line as a code block.
+				maxLevel := 0
+				if n := len(currentBlock.Items); n > 0 {
+					maxLevel = currentBlock.Items[n-1].ListLevel + 1
+				}
+				lineItem.ListLevel = min(lineItem.ListLevel, maxLevel)
 				currentBlock.AddItem(lineItem)
 				continue
 			}

@@ -286,7 +286,10 @@ The `docx2md` package converts Microsoft Word documents to Markdown.
 #### Features
 
 - Heading detection from Word styles (Heading 1-6)
-- List support (bulleted, numbered, lettered, roman numerals) with nesting
+- List support (bulleted, numbered, lettered, roman numerals) with nesting, including numbering set by paragraph styles
+- Numbered headings and multi-level numbers ("1.1", "(a)", "Article 1") as Word shows them
+- Text in text boxes
+- Optional header and footer text
 - Table extraction with markdown formatting
 - Bold/italic text formatting
 - Hyperlink conversion to markdown syntax
@@ -326,7 +329,7 @@ markdown, images, err := converter.ConvertWithImages(data)
 |--------|-------------|---------|
 | `WithPreserveFormatting(bool)` | Preserve bold/italic | true |
 | `WithPreserveImages(bool)` | Extract and include images | true |
-| `WithExtractHeadersFooters(bool)` | Include document headers/footers | false |
+| `WithExtractHeadersFooters(bool)` | Include header text before the body and footer text after it (library only, no CLI flag) | false |
 | `WithCompact(bool)` | Remove excessive blank lines | false |
 | `WithParagraphMarkers(bool)` | Emit `<!-- para N -->` location markers | true |
 
@@ -417,6 +420,8 @@ make fmt          # rewrite Go files with gofmt (make test only verifies)
 `make test` runs `test.sh`, which verifies formatting, runs `go vet`, runs `go test -race -count=1 ./...`, then drives the compiled CLI against the documents in `testdata/` and checks its output, exit codes and error messages. It ends with a summary and exits non-zero if anything failed. It needs Go and a C compiler (for the race detector) and nothing else. `./test.sh -k` keeps the work directory for debugging; `-n` or `NO_COLOR` turns colour off.
 
 `make test-private` runs the tests that need the private document corpus in `private/`, which is not in the repository. It fails, naming the file, if a document is missing.
+
+`make score` converts every distinct PDF in `private/` twice and scores its reading order against `pdftotext`. It fails if a file converts differently twice, newly fails to convert, or scores worse than the baseline; `make score-accept` records the run as the new baseline. Results are kept in `private/.score/`.
 
 ### Cross-Compilation
 

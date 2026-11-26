@@ -358,9 +358,21 @@ func TestLinesToTextNestedLists(t *testing.T) {
 	}
 
 	got := LinesToText(lines, false)
-	want := "- Level 0\n  - Level 1\n    - Level 2\n- Back to 0\n"
+	want := "- Level 0\n    - Level 1\n        - Level 2\n- Back to 0\n"
 
 	if got != want {
+		t.Errorf("LinesToText() = %q, want %q", got, want)
+	}
+}
+
+// A pipe in a table cell is escaped, so it does not end the cell
+func TestLinesToTextEscapesPipes(t *testing.T) {
+	lines := []*LineItem{
+		{IsTableRow: true, IsTableHeader: true, TableColumns: []string{"Command", "Meaning"}},
+		{IsTableRow: true, TableColumns: []string{"a | b", "pipe"}},
+	}
+	want := "| Command | Meaning |\n| --- | --- |\n| a \\| b | pipe |\n"
+	if got := LinesToText(lines, false); got != want {
 		t.Errorf("LinesToText() = %q, want %q", got, want)
 	}
 }

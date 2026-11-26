@@ -85,6 +85,15 @@ func WithParagraphMarkers(enabled bool) Option {
 	}
 }
 
+// WithExtractHeadersFooters includes the text of the document's headers and
+// footers in the output: headers before the body, footers after it. Off by
+// default.
+func WithExtractHeadersFooters(extract bool) Option {
+	return func(o *Options) {
+		o.ExtractHeadersFooters = extract
+	}
+}
+
 // WithOnDocumentParsed sets the callback for document parsing
 func WithOnDocumentParsed(callback func()) Option {
 	return func(o *Options) {
@@ -261,10 +270,8 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 	if c.options.ExtractHeadersFooters {
 		headers, err := extractor.ExtractHeaders()
 		if err == nil && len(headers) > 0 {
-			output.WriteString("## Document Headers\n\n")
-			for _, h := range headers {
-				output.WriteString(fmt.Sprintf("**%s**: %s\n\n", h.ID, h.Content))
-			}
+			output.WriteString("## Document headers\n\n")
+			writeHeaderFooterText(&output, "Header", headers)
 			output.WriteString("---\n\n")
 		}
 	}
@@ -282,10 +289,8 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 	if c.options.ExtractHeadersFooters {
 		footers, err := extractor.ExtractFooters()
 		if err == nil && len(footers) > 0 {
-			output.WriteString("\n\n---\n\n## Document Footers\n\n")
-			for _, f := range footers {
-				output.WriteString(fmt.Sprintf("**%s**: %s\n\n", f.ID, f.Content))
-			}
+			output.WriteString("---\n\n## Document footers\n\n")
+			writeHeaderFooterText(&output, "Footer", footers)
 		}
 	}
 
@@ -305,6 +310,19 @@ func (c *Converter) ConvertWithImages(data []byte) (string, []*models.ImageItem,
 	}
 
 	return markdown, images, nil
+}
+
+// writeHeaderFooterText writes each distinct header or footer text once, in
+// part order, labelled "Header" or "Footer"
+func writeHeaderFooterText(output *strings.Builder, label string, parts []docx.HeaderFooterContent) {
+	seen := make(map[string]bool)
+	for _, part := range parts {
+		if seen[part.Content] {
+			continue
+		}
+		seen[part.Content] = true
+		fmt.Fprintf(output, "**%s**: %s\n\n", label, part.Content)
+	}
 }
 
 // compactMarkdown reduces excessive blank lines in markdown.

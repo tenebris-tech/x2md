@@ -28,6 +28,11 @@ make
 make build
 make clean
 
+# PDF corpus score (private/, needs pdftotext): fails if a PDF converts
+# differently twice, newly errors, or scores worse than the baseline
+make score
+make score-accept                   # same run, recorded as the new baseline
+
 # Inner loop while iterating
 go test ./some/package
 ```
@@ -154,6 +159,7 @@ Test with reference PDF: `CPP_ND_V3.0E.pdf` (245 pages)
   - `extractor.go` - Content extraction (paragraphs, tables, lists)
   - `elements.go` - DOCX XML element structures
   - `styles.go` - Style and numbering definitions
+  - `numbering.go` - Number counters and label rendering
   - `relationships.go` - Hyperlink and image relationships
 - `docx2md/transform/` - Transformation pipeline
   - `transform.go` - Pipeline orchestration
@@ -176,21 +182,30 @@ Per OOXML specification, text runs (`<w:r>`) concatenate directly without implic
 - `xml:space="preserve"` preserves leading/trailing whitespace in `<w:t>` elements
 - `mergeConsecutiveFormattedWords()` combines adjacent runs with same formatting
 - Fixes fragmented text from Word editing (e.g., "an" + "d" → "and")
+- `cleanupWordWhitespace()` (also used for table cells via `joinWords()`) trims each word of ASCII whitespace (a no-break space is kept) and marks it attached (`AttachWithoutWhitespace`) when the source had no whitespace before it, because the shared renderer puts one space between words; this keeps spaces outside `**bold**` markers
+- `w:tab`, `w:br` and `w:cr` separate the words on either side; the runs of one hyperlink become one `[text](url)` word with edge spaces kept outside it (`linkWords()`)
+- Text box paragraphs (`w:txbxContent`, in `w:pict` or `w:drawing`) join the text of the paragraph that holds them; `mc:Fallback` content is skipped
 
 #### Style Resolution (`docx2md/docx/styles.go`)
 - `IsHeading()` - Detects Heading 1-6 styles by name or outline level
 - `IsBold()` / `IsItalic()` - Checks style formatting properties
 - Styles can inherit from parent styles via `basedOn`
 
-#### List Processing (`docx2md/docx/styles.go`)
-- `Numbering.GetListPrefix()` - Returns prefix based on numFmt (bullet, decimal, etc.)
-- Supports: bullet, decimal, lowerLetter, upperLetter, lowerRoman, upperRoman
-- Nested lists use indentation level (`ilvl`)
+#### List and Heading Numbering (`docx2md/docx/numbering.go`, `styles.go`)
+- `resolveNumbering()` takes `w:numPr` from the paragraph, else from its style's `basedOn` chain; `numId` 0 turns numbering off; a missing level comes from `w:lvl/w:pStyle`
+- `nextNumber()` advances counters shared by headings and list items in document order, one set per list: as in Word, every `w:num` on the same abstractNum (after `numStyleLink`) continues one sequence, and a num's `w:startOverride` sets its level once, the first time that num is used at that level (`w:start`, `w:lvlRestart` as usual). It renders `w:lvlText` ("%1.%2", "(%3)") in each level's numFmt, or decimal under `w:isLgl`
+- `w:lvlOverride/w:lvl` replaces a level; `w:numStyleLink` resolves to the abstractNum with the matching `w:styleLink`
+- Headings show the label before their text ("# 1. Services", "## 1.1 Fees"); bullet/none levels show none
+- List items: a decimal "N." / "N)" label is the list marker; any other label is kept after a bullet ("- a) Text", "- 1.1 Text", "- (a) Text"); bullets are "-"
+- Nesting is `ilvl`, or N-1 for Word's built-in "List Bullet N" / "List Number N" styles; `GatherBlocks` caps it at one level below the item above (level 0 for the first item) so Markdown never reads it as a code block
 
 #### Hyperlink Handling (`docx2md/docx/relationships.go`)
 - Hyperlinks reference relationships by ID (`r:id`)
 - `GetTarget()` resolves relationship ID to URL
 - External links have `TargetMode="External"`
+
+#### Headers and Footers (`docx2md/converter.go`)
+Off by default; `WithExtractHeadersFooters(true)` turns them on (no CLI flag). Header parts (`word/headerN.xml`) are written as a "Document headers" section before the body and footer parts after it, in part-number order, each distinct text once as "**Header**: text" / "**Footer**: text". They are outside the body, so they carry no paragraph markers.
 
 #### Paragraph Markers (`docx2md/docx/extractor.go`, `docx2md/transform/to_markdown.go`)
 Enabled by default (`WithParagraphMarkers`, CLI `-no-location-markers`):

@@ -148,6 +148,22 @@ func TestCLI_DOCXParagraphMarkers(t *testing.T) {
 	})
 }
 
+func TestCLI_DOCXStyleNumberedList(t *testing.T) {
+	md := runCLI(t, "procedure.docx")
+
+	// The steps use Word's "List Number" style and the bullet "List Bullet 2";
+	// neither paragraph carries its own numbering.
+	want := "1. Step 1: notify the incident manager and record evidence item 1.\n" +
+		"2. Step 2: notify the incident manager and record evidence item 2.\n" +
+		"3. Step 3: notify the incident manager and record evidence item 3.\n" +
+		"4. Step 4: notify the incident manager and record evidence item 4.\n" +
+		"5. Step 5: notify the incident manager and record evidence item 5.\n" +
+		"    - Nested bullet\n\n"
+	if !strings.Contains(md, want) {
+		t.Errorf("expected the numbered steps and nested bullet:\n%q\nin output:\n%s", want, md)
+	}
+}
+
 func TestCLI_XLSXSheetAndRangeLocators(t *testing.T) {
 	md := runCLI(t, "register.xlsx")
 	checkSourceHeader(t, md, "register.xlsx")
@@ -193,5 +209,39 @@ func TestCLI_MarkersStandAlone(t *testing.T) {
 				t.Errorf("%s line %d: marker %q is not surrounded by blank lines", fixture, i+1, line)
 			}
 		}
+	}
+}
+
+func TestCLI_UnsupportedSingleFile(t *testing.T) {
+	dir := t.TempDir()
+	note := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(note, []byte("plain text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{note},
+		{"-output", filepath.Join(dir, "x.md"), note},
+	} {
+		out, err := exec.Command(x2mdBinary, args...).CombinedOutput()
+		if err == nil {
+			t.Errorf("x2md %s: expected a non-zero exit", strings.Join(args, " "))
+		}
+		if !strings.Contains(string(out), "unsupported file type: .txt") {
+			t.Errorf("x2md %s: output %q does not name the unsupported type", strings.Join(args, " "), out)
+		}
+	}
+}
+
+func TestCLI_DirectorySkipsUnsupportedFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("plain text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(x2mdBinary, "-r", dir).CombinedOutput()
+	if err != nil {
+		t.Errorf("x2md -r: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "unsupported") {
+		t.Errorf("x2md -r: unsupported file was reported: %s", out)
 	}
 }
